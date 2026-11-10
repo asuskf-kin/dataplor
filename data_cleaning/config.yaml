@@ -1,17 +1,121 @@
-pipeline_settings:
-  # Set the active country for the pipeline (e.g., "cr", "mx", "co")
-  active_country: "cl"
+# Módulo 0: dejar solo locales nocturnos (bares, antros, cantinas, karaoke...).
+# Se enciende/apaga poniendo o quitando el 0 en modules_to_run (main.py).
+nightlife_filter:
+  # También conservar los "probables" (no hace falta que vendan alcohol): música en vivo,
+  # happy hour, deportes en TV, abren tarde (late_open_hour), o venden alcohol y
+  # cierran de noche (night_close_hour) vie/sáb o pasada la medianoche
+  # (y no son de desayunos).
+  # Una categoría de bar SIN atributos que la confirmen (alcohol, baile, karaoke,
+  # música en vivo, happy hour, deportes) se descarta siempre, igual que un registro
+  # sin actividad (sin reseñas, popularidad, visitas ni web). El nombre solo apoya:
+  # nunca decide por sí solo.
+  include_probable: true
+  # Abierto de noche cualquier día (ej. 16:30-01:00) aunque no tenga otra
+  # señal. Por categoría se descartan siempre licorerías/depósitos, farmacias,
+  # abarrotes, súper, gimnasios, escuelas, panaderías, cafés, heladerías, etc.
+  include_night_hours: true
+
+  # Horario nocturno: cierra DESPUÉS de esta hora (o pasada la medianoche).
+  night_close_hour: 20
+  # Abre tarde: todos los días con horario abren a esta hora o después.
+  late_open_hour: 15
+
+
+# ============================================================================
+# Agente (python -m cleaning_agent / skill /limpiar-dataplor en Claude Code)
+# Lo primero que pregunta es el modo de limpieza: geojson | clientes_bottler | ninguno.
+# Las secciones territory_filter y client_filter son los VALORES POR DEFECTO que el
+# agente propone en el formulario de cada modo; la persona puede cambiarlos.
+# ============================================================================
+agent:
+  # Módulos que se proponen en el plan (0 = solo nocturnos; si está el 0 se salta el 5).
+  default_modules: [1, 2, 3, 4, 5, 6]
+  # Nombres a rastrear en la auditoría (.txt en data/audit).
+  items_to_track: ["CLUB DE NUTRICION HERBALIFE"]
+  # Checkpoints de LangGraph (permite reanudar un hilo tras cerrar la terminal).
+  checkpoints: "data/checkpoints.sqlite"
+  # Pasos intermedios de cada corrida: data/runs/<hilo>/NN_*.parquet
+  runs_dir: "data/runs"
+  # Intentos para corregir rutas inválidas antes de cancelar el hilo.
+  max_input_attempts: 3
+
+# Dataplor raw: un path "dataplorraw/<blob>" se descarga de este contenedor de Azure.
+# Es el contenedor por defecto ÚNICAMENTE para el Dataplor raw.
+dataplor_raw:
+  container: "dataplorraw"
+  local_dir: "data/raw"   # se descarga en data/raw/<pais>/<bottler>/dataplor_raw/
+
+# Datawarehouse de prod: capas drop_zone -> bronze -> silver -> gold, fecha yyyymmdd.
+# Cada archivo se sube con su _metadata.json (QA, orígenes, linaje) y _qa.html, siempre
+# preguntando antes. El espejo local replica la misma ruta bajo mirror_dir.
+dwh:
+  container: "prospecting-data"
+  path_template: "{layer}/ko/{pais}/{bottler}/{fecha}"   # ej. bronze/ko/ar/andina/20261109
+  mirror_dir: "data"
+
+# Modo "geojson": cruza el Parquet CRUDO de Dataplor con el territorio del embotellador
+# y deja solo puntos activos, abiertos y dentro de los polígonos.
+territory_filter:
+  # Parquet(s) crudos de Dataplor. Acepta comodín para exports partidos en part-*.
+  parquet: "data/raw/mx/centro_pacifico/part-*.parquet"
+  geojson: ""
+  # Valor de la columna 'embotelladora'. Vacío = nombre de la carpeta de paths.raw_data.
+  bottler: ""
+  # Propiedades del GeoJSON a copiar al output con prefijo territorio_ (ej. Arca: ["estado", "id"]).
+  territory_columns: []
+  only_active_open: true
+  batch_size: 200000
+  # null = archivo completo. 2 = corrida de prueba rápida.
+  max_batches: null
+  # true = también guardar los puntos fuera del territorio como territory_outside.parquet.
+  save_outside: false
+
+# Modo "clientes_bottler": deja los puntos de Dataplor a menos de radius_m de un cliente.
+client_filter:
+  parquet: "data/raw/mx/centro_pacifico/part-*.parquet"
+  clients_csv: ""
+  client_lat_col: "Coord_Y"
+  client_lon_col: "Coord_X"
+  radius_m: 900
+  only_active_open: true
+  batch_size: 200000
+  max_batches: null
+
+# Tras publicar el CSV limpio: ¿Datamatch? -> Front -> QA -> Azure
+datamatch:
+  # Front de Kin: ahí la persona sube el CSV limpio, corre Datamatch y descarga el resultado.
+  front_url: "https://kin-analytics.web.app/home"
+  # Proyecto QA_datamatch (se corre con su propio entorno: uv run --project).
+  qa_project_dir: "../../QA_datamatch"
+  qa_timeout_s: 1800
+  # Base de clientes POS que usa el QA para el rescate por nombre + distancia.
+  clients_file: ""
+  thresholds:
+    match: 0.71
+    super_match: 0.80
+
+# Priorización On Premise (se corre con su propio entorno: uv run --project; usa su .env).
+priorizacion:
+  repo_dir: "../../Priorizacion_On_Premise_code"
+  timeout_s: 3600
+
+# Guardar entregables en Azure Blob Storage (siempre pide confirmación antes de subir).
+# Credenciales SOLO por variables de entorno (ver .env.example):
+#   AZURE_STORAGE_ACCOUNT_URL (recomendado, usa az login / identidad administrada)
+#   o AZURE_STORAGE_CONNECTION_STRING.
+azure_storage:
+  container: ""
+  # Placeholders: {country}, {bottler}, {date}
+  blob_prefix: "prospeccion/{country}/{bottler}/{date}"
+  timeout_s: 120
+  max_attempts: 3
 
 
 paths:
   # Base data directory
   data_dir: "data"
 
-  # Paths are declared relative to the project root directory
-  raw_data: "data/raw/cl/dataplor_cleaned.csv"
-  
-  # You can add future paths here, for example:
-  output_data: "data/processed/dataplor_final_pipeline_output_cl.csv"
+  # raw / cleaned / output paths are chosen per run by the agent (intake)
 
 # Reporte ejecutivo (report.ipynb)
 reporte:
@@ -19,6 +123,8 @@ reporte:
   carpeta: "reports"
 
   # Nombre base de los archivos, sin extensión. Se generan .html y .pdf con ese nombre.
-  # Placeholders disponibles: {pais}, {canal}, {fecha}
-  nombre: "reporte_ejecutivo_{pais}_{canal}_{fecha}"
+  # Placeholders disponibles: {pais}, {canal}, {bottler}, {fecha}
+  # {bottler} sale de la carpeta del CSV de entrada (data/raw/<pais>/<bottler>/...);
+  # para forzar otro nombre, agregar aquí:  bottler: "Nayar"
+  nombre: "reporte_ejecutivo_{pais}_{canal}_{bottler}_{fecha}"
 

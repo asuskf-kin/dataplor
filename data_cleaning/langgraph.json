@@ -1,0 +1,6 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "limpieza_dataplor": "./cleaning_agent/entrypoints/studio.py:graph"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "fetch_inputs",
+  "name": "Descarga de insumos (GeoJSON / clientes)",
+  "started_at": "2026-11-09T23:52:32+00:00",
+  "finished_at": "2026-11-09T23:52:33+00:00",
+  "code_version": "52fbdc2-dirty",
+  "inputs": [
+    {
+      "path": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson",
+      "rows": null,
+      "bytes": null,
+      "sha256": null,
+      "blob": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+      "rows": null,
+      "bytes": 2696,
+      "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "files": 1
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+    "bytes": 2696,
+    "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba"
+  }
+}

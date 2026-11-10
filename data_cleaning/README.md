@@ -36,42 +36,107 @@ The pipeline runs six modules in order. Each one receives the surviving rows fro
 
 You choose which modules run and in what order (see [Example code](#example-code)).
 
+### Agentic flow (LangGraph + human-in-the-loop)
+
+The pipeline runs as a **LangGraph agent** (`cleaning_agent/`) that stops and asks a person at every decision.
+No notebook is involved. The first question is always:
+
+> **¿Vamos a limpiar los datos por...?** `geojson` (cruzar territorio) · `clientes_bottler` (cercanía a clientes) · `ninguno`
+
+```
+start -> choose_mode* -> collect_inputs* -> confirm_plan* --cancel--> END
+                                                |
+              geojson | clientes_bottler: prefilter    ninguno: (skip)
+                                                v
+                       load_input -> run_module (modules 0-6, one step each)
+                                                v
+                     finalize (audit + HTML report) -> approve_output* --reject--> END
+                                                v
+                              publish (paths.output_data) -> ¿Datamatch?* --no--+
+                                                | sí                            |
+                 Front (datamatch, in the Kin web app)* -> QA explore           |
+                       -> thresholds* -> QA run (QA_datamatch project) ---------+
+                                                                                v
+                                   confirm_upload* --keep local--> END
+                                                v
+                                   upload to Azure Blob Storage -> END
+* = interrupt: waits for the human. Invalid answers are re-asked (agent.max_input_attempts).
+```
+
+After publishing locally, the agent asks whether to run **Datamatch**. Datamatch runs in the Front
+(`datamatch.front_url`, https://kin-analytics.web.app/home): the person uploads the cleaned CSV, runs it and
+gives the agent the downloaded file. The agent then runs the **QA** from the separate `QA_datamatch` project
+(`datamatch.qa_project_dir`, through `uv run --project`, so its config is never edited), asks for the
+`match` / `super_match` thresholds after you read its HTML report, and finally asks before uploading the
+deliverables to **Azure**. Azure credentials come only from `AZURE_STORAGE_ACCOUNT_URL` (recommended,
+Azure AD) or `AZURE_STORAGE_CONNECTION_STRING` (see `.env.example`).
+
+| Mode | What you provide | Pre-filter |
+|---|---|---|
+| `geojson` | Raw Dataplor `part-*.parquet` + territory `.geojson` | Active + open points inside the polygons (`cleaning_agent/adapters/streaming/territory.py`) |
+| `clientes_bottler` | Raw Dataplor `part-*.parquet` + bottler clients `.csv` (lat/lon columns) | Active + open points within `radius_m` of a client (`cleaning_agent/adapters/streaming/client_proximity.py`) |
+| `ninguno` | A Dataplor CSV already prepared | None |
+
+Both pre-filters stream the Parquet in batches (a ~10M-row export does not need to fit in RAM) and write
+`raw_csv`, which the modules (and `report.ipynb`) read as before. Defaults for each form come from the
+`territory_filter` / `client_filter` / `agent` sections of `config.yaml`.
+
+**How to run it**
+
+- In **Claude Code**: `/limpiar-dataplor` (`.claude/skills/limpiar-dataplor`). Claude runs the CLI, asks you each
+  question and sends your answer back. It never answers for you.
+- In a **terminal**: `uv run python -m cleaning_agent interactive`.
+- Step by step (machine-readable JSON on stdout):
+  ```bash
+  uv run python -m cleaning_agent start
+  uv run python -m cleaning_agent resume --thread <id> --answer '{"mode": "geojson"}'
+  uv run python -m cleaning_agent status --thread <id>
+  uv run python -m cleaning_agent graph   # Mermaid diagram
+  ```
+
+Every run is a thread checkpointed in `data/checkpoints.sqlite`: you can close the terminal between questions and
+resume later. Intermediate steps are Parquet files in `data/runs/<thread>/`. The thread id is the run's
+Correlation ID and appears on every log line.
+
+**Architecture (hexagonal)**
+
+```
+cleaning_agent/
+├── domain/      models.py (Pydantic contracts for every answer) · modules.py (module catalog + plan rules)
+├── ports.py     PrefilterPort · DatasetPort · AuditPort (Protocols)
+├── adapters/    prefilters.py (territory, client proximity) · filesystem.py (datasets, audit, HTML report)
+├── graph/       state.py · nodes.py · builder.py · studio.py (langgraph dev)
+├── wiring.py    composition root (binds ports to adapters and config.yaml)
+└── cli.py       start / resume / status / interactive / graph
+```
+
+The cleaning rules live in `cleaning_agent/domain/cleaning/` (pure Polars functions). Tests use in-memory fakes for the ports.
+
+Verification: `uv run pytest -q`
+
 ---
 
 ## Requirements — files you must provide
 
 > ⚠️ **The pipeline will not run without these.** It reads real files from disk at startup and raises an error if they are missing.
 
-### 1. Input data — `data/raw/dataplor_cleaned.csv`
+### 1. Input data — the raw Dataplor export
 
-A Dataplor CSV export. Path is set in `config.yaml` (`paths.raw_data`). At minimum the following columns are used by one or more modules:
+The agent asks for its path in the intake (`.parquet`, a `part-*.parquet` glob, or `.csv`). The modules use
+`name`, `latitude`, `longitude`, `dataplor_id`, `parent_location`, `monday_hours` … `sunday_hours` and,
+optionally, `identified_as_chain`; extra columns are carried through untouched.
 
-| Column | Used by | Notes |
-|--------|---------|-------|
-| `name` | all | Business name (required). |
-| `latitude`, `longitude` | modules 3, 4, 6 | Decimal degrees. Rows without coordinates are skipped by the spatial steps. |
-| `dataplor_id` | module 3 | Unique row id, used to pick which duplicate to keep. |
-| `parent_location` | module 6 | Property/building identifier for the crowding filter. |
-| `monday_hours` … `sunday_hours` | module 4 | Format `"HH:MM-HH:MM"` (e.g. `09:00-18:00`). `"Not available"`, empty, or `00:00-00:00` count as no hours. |
-| `identified_as_chain` | module 2 | Optional. If present and `"True"`, the row is dropped as a source-flagged chain. |
+### 2. Country pattern file — `cleaning_agent/domain/patterns/patterns_<iso2>.py`
 
-Extra columns are preserved and carried through to the output untouched.
-
-> A real 87k-row sample lives at [`data/raw/dataplor_cleaned.csv`](data/raw/dataplor_cleaned.csv) if you want to see the exact schema.
-
-### 2. Country pattern file — `config/patterns_<country>.py`
-
-The pipeline is **country-aware**. Whatever you set as `active_country` in `config.yaml` (e.g. `mx`), it dynamically imports `config/patterns_mx.py`. That file **must** define:
-
-- `CHAIN_REGEX` — **required.** A list of regex patterns for chains to remove.
-- `PATTERNS_MX` (optional) — extra patterns; silently ignored if absent.
-
-Two are shipped out of the box: [`config/patterns_mx.py`](config/patterns_mx.py) (Mexico) and [`config/patterns_cr.py`](config/patterns_cr.py) (Costa Rica). To support a new country, copy one of these to `config/patterns_<code>.py`, adapt the chains, and set `active_country` to that code. Missing the file → the pipeline raises a clear `ValueError` at startup.
+The country is asked per run (ISO 2). The chain filter loads `CHAIN_REGEX` from
+`cleaning_agent/domain/patterns/patterns_<iso2>.py` (`do` uses the historical `patterns_rd.py`). Countries
+without a file are rejected in the intake with the list of available ones. To add a country, copy an existing
+file, adapt the chains and the agent offers it automatically.
 
 ### 3. Keyword lists (already provided)
 
-- [`config/global_exclude.py`](config/global_exclude.py) — `GLOBAL_EXCLUDE_KEYWORDS` (module 4) and `FINAL_KEYWORD_EXCLUDE_KEYWORDS` (module 5).
-- [`config/keep_words.py`](config/keep_words.py) — `KEEP_WORDS`, the whitelist that protects legit shops from the module 5 blacklist.
+- [`global_exclude.py`](cleaning_agent/domain/patterns/global_exclude.py) — `GLOBAL_EXCLUDE_KEYWORDS` (module 4) and `FINAL_KEYWORD_EXCLUDE_KEYWORDS` (module 5).
+- [`keep_words.py`](cleaning_agent/domain/patterns/keep_words.py) — `KEEP_WORDS`, the whitelist that protects legit shops from the module 5 blacklist.
 
 ---
 
@@ -106,26 +171,12 @@ That's it. `uv sync` reads `pyproject.toml` + `uv.lock` and installs pinned vers
 From the project root (`data_cleaning/`):
 
 ```bash
-uv run main.py
+uv run python -m cleaning_agent interactive
 ```
 
-This runs all six modules on `data/raw/dataplor_cleaned.csv` for the country set in `config.yaml`, and writes the cleaned file to `data/processed/dataplor_final_pipeline_output.csv`.
-
-You'll see per-module progress in the console:
-
-```
-==================================================
-🚀 STARTING PIPELINE FOR COUNTRY: MX
-==================================================
-📁 Input file: .../data/raw/dataplor_cleaned.csv
-📁 Output file: .../data/processed/dataplor_final_pipeline_output.csv
-
-... - INFO - Initial records: 87197
-... - INFO - Executing Module 2: Chain Filter...
-... - INFO - [Module 2] Removed 8123 rows. Dataset reduced by 9.32%. ...
-...
-... - INFO - Done in 1.24 mins. Final file saved to ...
-```
+The agent first asks the cleaning mode, then the files for that mode (pre-filled from `config.yaml`), shows the
+plan (modules to run) for approval, runs it, and asks before publishing the cleaned CSV. In Claude Code, use
+`/limpiar-dataplor` instead. See [Agentic flow](#agentic-flow-langgraph--human-in-the-loop).
 
 ---
 
@@ -133,116 +184,47 @@ You'll see per-module progress in the console:
 
 ### `config.yaml`
 
-```yaml
-pipeline_settings:
-  # Which country pattern file to load: cr, mx, co, ...
-  active_country: "mx"
+The country, bottler, channel, premise and paths are **not** in the config: the agent asks them per run.
+`config.yaml` holds defaults the forms propose and service settings:
 
-paths:
-  data_dir: "data"
-  raw_data: "data/raw/dataplor_cleaned.csv"          # input
-  output_data: "data/processed/dataplor_final_pipeline_output.csv"  # output
-```
+| Section | What it holds |
+|---|---|
+| `agent` | default modules, names to track, checkpoints file, runs folder, retry limit |
+| `territory_filter` / `client_filter` | defaults for the distancia / client bottler pre-filters |
+| `nightlife_filter` | module 0 parameters |
+| `datamatch` | Front URL, QA_datamatch project, client base, default thresholds |
+| `priorizacion` | Priorizacion_On_Premise_code project and timeout |
+| `azure_storage` | container, timeouts, retries (credentials only via environment variables) |
+| `reporte` | executive report folder and file-name template |
+| `paths.data_dir` | local data folder |
 
-### `reporte:` — naming the executive summary
+### `reporte:` — naming the executive report
 
 ```yaml
 reporte:
   carpeta: "reports"
-  nombre: "reporte_ejecutivo_{pais}_{canal}_{fecha}"
+  nombre: "reporte_ejecutivo_{pais}_{canal}_{bottler}_{fecha}"
 ```
 
-`report.ipynb` writes its HTML and PDF to `carpeta` using `nombre` as the base filename
-(the extension is added). Placeholders: `{pais}` (from `active_country`), `{canal}` (the
-notebook's `CANAL`, slugified — `todos_los_canales` when unset) and `{fecha}`
-(`YYYYMMDD_HHMMSS`). Drop `{fecha}` to overwrite the same file on every run. An unknown
-placeholder falls back to the default name and is reported as a warning inside the report.
+Placeholders: `{pais}` and `{bottler}` from the intake, `{canal}` from the premise (slugified,
+`todos_los_canales` for *ambos*) and `{fecha}` (`YYYYMMDD_HHMMSS`). An unknown placeholder falls back to the
+default name and is reported as a warning inside the report.
 
-### Runtime switches — bottom of `main.py`
+### Modules and parameters
 
-```python
-if __name__ == "__main__":
-    modules_to_run = [1, 2, 3, 4, 5, 6]        # pick & order the steps
-
-    save_intermediate_csvs = True               # write data/processed/0X_*.csv after each step
-    save_dropped_csvs      = True               # write data/dropped/0X_*.csv (the removed rows)
-    track_these_elements   = ["CLUB DE NUTRICION HERBALIFE"]   # audit trail for specific names
-
-    run_pipeline(
-        modules_to_run=modules_to_run,
-        save_tracking=save_intermediate_csvs,
-        save_drops=save_dropped_csvs,
-        items_to_track=track_these_elements,
-    )
-```
-
-**Tuning a module's thresholds** is done in the `PIPELINE_STEPS` dict in `main.py`. For example, to make the spatial dedup radius tighter:
+Which modules run is decided in the plan approval (`confirm_plan`), defaulting to `agent.default_modules`.
+Module parameters (radii, thresholds, `max_appearances`...) are fixed in
+`cleaning_agent/application/cleaning_catalog.py`; module 0 (nightlife) reads `nightlife_filter` from
+`config.yaml`. Each module is a pure function in `cleaning_agent/domain/cleaning/` that can be called
+directly with a Polars DataFrame, e.g.:
 
 ```python
-3: {
-    "name": "Module 3: BallTree Dedup",
-    "file": "03_geo_balltree_deduped.csv",
-    "func": lambda df, items: balltree_spatial_deduplication(
-        df, radius_meters=25, items_to_track=items   # 50 → 25 meters
-    ),
-},
-```
-
----
-
-## Example code
-
-### Run only a subset of steps
-
-Skip the chain filter and crowding filter, run just normalize → spatial dedup → hours/fuzzy:
-
-```python
-from main import run_pipeline
-
-run_pipeline(
-    modules_to_run=[1, 3, 4],
-    save_tracking=True,
-    save_drops=True,
-    items_to_track=None,        # no audit
-)
-```
-
-### Fast mode (no auditing, no intermediate files)
-
-The modules have a dedicated fast path when `items_to_track` is empty/None:
-
-```python
-from main import run_pipeline
-
-run_pipeline(
-    modules_to_run=[1, 2, 3, 4, 5, 6],
-    save_tracking=False,   # don't dump 0X_*.csv after each step
-    save_drops=False,      # don't keep removed rows
-    items_to_track=None,   # skip audit bookkeeping (faster)
-)
-```
-
-### Call a single module directly
-
-Every module has the same signature `(df, ...) -> (df, items_to_track, report, dropped_df)` and works on a **Polars** DataFrame:
-
-```python
-import pandas as pd
 import polars as pl
-from src.chain_removal import filter_chains_and_duplicates
+from cleaning_agent.domain.cleaning.normalize import normalize_names
+from cleaning_agent.domain.cleaning.geo_dedup import balltree_spatial_deduplication
 
-df = pl.from_pandas(pd.read_csv("data/raw/dataplor_cleaned.csv", low_memory=False))
-# normalize first so 'name_normalized' exists
-from src.normalize import normalize_names
-df = normalize_names(df)
-
-clean_df, _, report, dropped_df = filter_chains_and_duplicates(
-    df, max_appearances=4, items_to_track=["OXXO"]
-)
-print(report)              # audit text: did "OXXO" survive or get dropped?
-clean_df.write_csv("chains_removed.csv")
-
-print(dropped_df.select(["name_normalized", "drop_reason", "drop_match", "drop_pattern"]))
+df = normalize_names(pl.read_csv("dataplor.csv"))
+df_clean, _, report, dropped = balltree_spatial_deduplication(df, radius_meters=50)
 ```
 
 ---
@@ -250,7 +232,7 @@ print(dropped_df.select(["name_normalized", "drop_reason", "drop_match", "drop_p
 ## Why was a record dropped?
 
 Every module returns a 4th element (`dropped_df`): the rows it removed, annotated with the
-columns below (defined in [`src/drop_audit.py`](src/drop_audit.py)). The pipeline writes
+columns below (defined in [`drop_audit.py`](cleaning_agent/domain/cleaning/drop_audit.py)). The pipeline writes
 them to `data/dropped/0X_*.csv`, so no removal is a black box. Each module fills in the
 columns that apply to it.
 
@@ -304,94 +286,47 @@ After a full run you get:
 | `reports/pipeline_report_<timestamp>.html` | Interactive bar chart of records removed per step + top-5 dropped names. |
 | `reports/<reporte.nombre>.html` / `.pdf` | **Executive summary** — retention headline, funnel, drop reasons, what triggered them, impact per category and region. Produced by [`report.ipynb`](report.ipynb): HTML self-contained for sharing, A4 PDF for printing. |
 
-### Executive summary — `report.ipynb`
+### Executive report
 
-Run the notebook top to bottom after a pipeline run (`save_drops=True`). Cell 0 holds the only
-knob: `CANAL` (e.g. `"On Premise"`, or `None` for no channel filter). When set, the channel cut
-is reported as step 7 of the funnel, so the summary shows both the **complete dataset** and the
-**channel deliverable**, and how many records the channel filter alone removed.
-
-It cross-joins the raw input, the final output and every `data/dropped/0X_*.csv` **by
-`dataplor_id`** — never by `name`, since the same name can have both surviving and dropped
-branches — and answers:
-
-- how much of the universe survives, and which step is the most aggressive;
-- the exact rule behind every removal (`drop_reason`) and the text or regex that triggered it;
-- which business categories and regions absorb the cuts;
-- how many duplicate groups were collapsed and how large they were.
-
-It checks that `initial − dropped = final` and warns, in the notebook and in both exports, when
-the artifacts come from different runs. The last cell writes the HTML **and** an A4 PDF — the
-PDF is built with matplotlib, so it needs no LaTeX, no WeasyPrint and no extra install.
-
-To run it headless:
-
-```bash
-C:/Python314/python.exe -m nbconvert --to notebook --execute --inplace report.ipynb
-```
-
-The notebook needs `pandas` + `matplotlib` in the kernel (it deliberately avoids `polars`,
-`jinja2` and `df.style` so it runs on a bare kernel).
-
-**Sample audit report** (from `track_these_elements=["CLUB DE NUTRICION HERBALIFE"]`):
-
-```
-🔍 Tracked text: 'FITNESS'
-    ✅ SURVIVED: Passed this filter successfully (208 records).
-    ❌ DROPPED: Removed at this step due to: [1_Regex_Chain] (73 records dropped).
-        ↳ matched on: 'gimnasio'
-        ↳ regex used: \bgimnasio\b
-```
-
-This tells you 37 Herbalife records were cut by the **hours filter** in module 4 — instantly explaining an unexpected drop without digging through raw data.
+Generated right after the cleaned CSV is published (`executive_report` node): HTML, PDF and Excel in
+`reporte.carpeta`, named with `reporte.nombre` ({pais}, {canal}, {bottler}, {fecha}). The channel comes from
+the intake's premise (on premise / off premise / ambos = all). Code:
+`cleaning_agent/adapters/executive_report_builder.py` (port of the old `report.ipynb`, kept in `legacy/`).
 
 ---
 
 ## Example cases
 
-**Case 1 — "Why did my count drop by 9%?"**
-Open the newest `reports/pipeline_report_*.html`. The bar chart shows each step's removals; the cards list the top-5 most-removed names. If "Module 2: Chain Filter" is the tallest bar with `OXXO`, `WALMART` on top, that's expected chain removal.
-
-**Case 2 — "Is a specific brand being wrongly filtered?"**
-Set `track_these_elements = ["MI TIENDITA"]` and re-run. The audit file will say either `✅ SURVIVED` at every step, or pinpoint the exact module and reason (e.g. `[1_Global_Keywords]`) that removed it. If it's a false positive, add the word to `KEEP_WORDS` in `config/keep_words.py`.
-
-**Case 3 — "I need to recover removed rows."**
-Every step's casualties are in `data/dropped/0X_*.csv`. To see everything the hours/fuzzy step cut, open `data/dropped/04_hours_fuzzy_filtered.csv`.
-
-**Case 4 — "Run the pipeline for Costa Rica instead of Mexico."**
-Change `active_country: "cr"` in `config.yaml` (the CR pattern file already exists) and re-run `uv run main.py`. No code changes needed.
+Run the agent and answer the intake, e.g. `mx` / `Centro Pacifico` / `tradicional` / `on_premise` /
+`data/raw/mx/centro_pacifico/part-*.parquet`, then "¿Va a limpiar el Dataplor?" → *sí, por distancia* with the
+territory GeoJSON. For another country, answer another ISO 2 code in the intake: no code or config change.
 
 ---
 
 ## Project structure
 
+Clean/hexagonal layers; dependencies point inwards (domain ← application ← adapters/entrypoints).
+
 ```
 data_cleaning/
-├── main.py                 # entry point + pipeline orchestration
-├── config.yaml             # active country & file paths
-├── pyproject.toml          # dependencies (uv)
-├── uv.lock                 # pinned versions
-├── config/
-│   ├── settings.py         # loads config.yaml, dynamically imports country patterns
-│   ├── patterns_mx.py      # Mexico chain regex  (CHAIN_REGEX)
-│   ├── patterns_cr.py      # Costa Rica chain regex
-│   ├── global_exclude.py   # keyword blacklists (modules 4 & 5)
-│   └── keep_words.py        # whitelist protecting legit shops
-├── src/
-│   ├── normalize.py        # module 1
-│   ├── chain_removal.py    # module 2
-│   ├── geo_dedup.py        # module 3 (BallTree / haversine)
-│   ├── adv_filters.py      # module 4 (hours + fuzzy)
-│   ├── final_regex.py      # module 5
-│   ├── crowded_property.py # module 6
-│   ├── hours_filter.py     # opening-hours logic used by module 4
-│   ├── drop_audit.py       # shared drop_* audit columns & report lines
-│   ├── drop_tracker.py     # saves removed rows
-│   ├── report.py           # HTML report + step metrics
-│   └── utils.py            # dedup, logging, audit helpers
-└── data/
-    ├── raw/                # INPUT lives here
-    ├── processed/          # survivors + final output
-    ├── dropped/            # removed rows per step
-    └── audit/              # per-name trace reports
+├── config.yaml                 # defaults for the agent's forms (no global country: it is asked per run)
+├── langgraph.json              # graph for `langgraph dev` / Studio
+├── cleaning_agent/
+│   ├── domain/                 # pure rules, no I/O
+│   │   ├── models.py           # Pydantic contracts for every human answer
+│   │   ├── lineage.py          # lineage records and final document
+│   │   ├── cleaning/           # modules 0-6 (normalize, chains, dedup, hours, regex, crowded...), step metrics
+│   │   └── patterns/           # patterns_<iso2>.py chain regex, keyword lists
+│   ├── application/
+│   │   ├── ports.py            # Protocols the graph depends on
+│   │   ├── cleaning_catalog.py # modules + parameters for the run's country
+│   │   └── graph/              # state, nodes (intake → … → lineage), builder
+│   ├── adapters/               # filesystem, streaming pre-filters, executive/drop reports, QA, priorización,
+│   │                           # Azure, lineage
+│   ├── entrypoints/            # cli.py (start/resume/status/interactive/graph), studio.py
+│   ├── wiring.py               # composition root
+│   ├── settings.py             # reads config.yaml
+│   └── observability.py        # correlation-id logger
+├── tests/                      # pytest, in-memory fakes for every port
+└── legacy/                     # old main.py and report.ipynb (reference only)
 ```
