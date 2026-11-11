@@ -1,0 +1,54 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "stage_priorizacion",
+  "name": "Priorización: espejo local + QA",
+  "started_at": "2026-11-11T19:05:54+00:00",
+  "finished_at": "2026-11-11T19:05:58+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "prospecting-data/bronze/ko/ar/andina/providers/dataplor_on_premise_priority_andina_argentina/20261111/1_priority_andina_argentina_202611.csv",
+      "rows": null,
+      "bytes": null,
+      "sha256": null,
+      "blob": "prospecting-data/bronze/ko/ar/andina/providers/dataplor_on_premise_priority_andina_argentina/20261111/1_priority_andina_argentina_202611.csv"
+    },
+    {
+      "path": "prospecting-data/bronze/ko/ar/andina/providers/dataplor_on_premise_priority_andina_argentina/20261111/dataplor_on_premise_priority_andina_argentina_202611.csv",
+      "rows": null,
+      "bytes": null,
+      "sha256": null,
+      "blob": "prospecting-data/bronze/ko/ar/andina/providers/dataplor_on_premise_priority_andina_argentina/20261111/dataplor_on_premise_priority_andina_argentina_202611.csv"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\providers\\dataplor_on_premise_priority_andina_argentina\\20261111\\1_priority_andina_argentina_202611.csv",
+      "rows": null,
+      "bytes": 87860758,
+      "sha256": "de5bcab8e858ff02a413aad42e55352732716e817f5e3ae24d5447936279f417",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\providers\\dataplor_on_premise_priority_andina_argentina\\20261111\\dataplor_on_premise_priority_andina_argentina_202611.csv",
+      "rows": null,
+      "bytes": 91405349,
+      "sha256": "af04e0a5b83054a331eefd21cf314f4cc2f69c781abbc9b02cb68246a64ef5fb",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "filas_leidas": 55895,
+    "filas_conservadas": 55895,
+    "filas_eliminadas": 0,
+    "pct_eliminado": 0.0,
+    "eliminadas_por_motivo": {},
+    "columnas_paso2": 36,
+    "qa_ok": true
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\providers\\dataplor_on_premise_priority_andina_argentina\\20261111\\1_priority_andina_argentina_202611.csv",
+    "bytes": 87860758,
+    "sha256": "de5bcab8e858ff02a413aad42e55352732716e817f5e3ae24d5447936279f417"
+  }
+}

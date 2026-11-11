@@ -73,7 +73,7 @@ def test_second_question_is_whether_to_clean_dataplor():
     }
 
 
-def test_intake_rejects_unsupported_country_and_missing_raw():
+def test_intake_accepts_any_iso2_and_rejects_a_missing_raw():
     deps, *_ = make_deps()
     app = _app(deps)
     run_start(app, "t1")
@@ -83,8 +83,8 @@ def test_intake_rejects_unsupported_country_and_missing_raw():
     )
 
     assert view["interrupt"]["kind"] == "intake"
+    # Countries without patterns are fine here: check_patterns creates them later
     assert view["interrupt"]["errors"] == [
-        "country: no chain patterns for 'co'. Available: ['mx', 'pe']",
         "dataplor_raw: no local file matches x/nada.parquet",
     ]
     # The retry keeps what was typed, so only the wrong fields need fixing
@@ -113,20 +113,23 @@ def test_prefilter_modes_run_to_publication(mode):
     assert _kind(view) == "confirm_plan"
     assert [m["id"] for m in view["interrupt"]["modules"]] == [1, 2]
     view = run_resume(app, "t1", {"approved": True})
-    assert _kind(view) == "approve_output"
-    summary = view["interrupt"]["summary"]
+    assert _kind(view) == "confirm_layer_upload"
+    qa = view["interrupt"]["qa"]  # silver validation shows the cleaning QA
+    assert view["interrupt"]["layer"] == "silver"
     view = run_resume(app, "t1", {"approved": True})
 
-    assert _kind(view) == "ask_datamatch"  # the local CSV is written before asking
+    assert (
+        _kind(view) == "front_datamatch"
+    )  # CSV published, report done, then the Front
     assert prefilter.calls == ["t1"]  # thread id travels as the correlation id
-    assert summary["input_rows"] == 4
-    assert summary["final_rows"] == 2  # module 1 drops OXXO, module 2 drops one more
-    assert [s["dropped"] for s in summary["steps"]] == [1, 1]
+    assert qa["filas_leidas"] == 4
+    assert qa["filas_conservadas"] == 2  # module 1 drops OXXO, module 2 drops one more
+    assert list(qa["eliminadas_por_motivo"].values()) == [1, 1]
     assert datasets.published[PATHS["output_csv"]].height == 2
     assert datasets.drops == ["01_fake", "02_fake"]
     assert datasets.cleared == 1
     assert audit.finished and audit.steps == ["MODULE 1 (Fake 1: chains)"]
-    assert view["result"]["report_path"] == "report.html"
+    assert Path(view["result"]["report_path"]).parent.parts[:2] == ("data", "silver")
 
 
 def test_no_cleaning_sends_the_raw_dataplor_to_the_pipeline():
@@ -141,7 +144,7 @@ def test_no_cleaning_sends_the_raw_dataplor_to_the_pipeline():
     view = run_resume(app, "t1", {"approved": True, "modules": [2]})
     view = run_resume(app, "t1", {"approved": True})
 
-    assert _kind(view) == "ask_datamatch"
+    assert _kind(view) == "front_datamatch"
     assert datasets.published[PATHS["output_csv"]].height == 3
     assert prefilter.calls == []
     assert view["result"]["modules"] == [2]
@@ -214,7 +217,7 @@ def test_nightlife_plan_skips_final_regex():
     assert view["result"]["modules"] == [0, 1]
 
 
-def test_rejected_output_is_not_published():
+def test_declined_silver_stays_local_after_the_report_is_shown():
     deps, datasets, *_ = make_deps()
     app = _app(deps)
     begin(app, "t1", "geojson")
@@ -223,8 +226,10 @@ def test_rejected_output_is_not_published():
 
     view = run_resume(app, "t1", {"approved": False, "note": "faltan columnas"})
 
-    assert view["status"] == "rejected"
-    assert datasets.published == {}
+    # The local CSV + report are built for the review; declining keeps them local only
+    assert view["status"] == "kept_local"
+    assert PATHS["output_csv"] in datasets.published
+    assert not [u for u in deps.storage.uploads if u[2].startswith("silver/")]
     assert view["result"]["note"] == "faltan columnas"
 
 
@@ -345,7 +350,7 @@ def test_every_step_has_a_visible_status():
         status["intake"] == status["choose_cleaning"] == status["fetch_raw"] == "done"
     )
     assert status["collect_inputs"] == "waiting_for_human"
-    assert status["prefilter"] == status["upload"] == "pending"
+    assert status["prefilter"] == status["upload_prospects"] == "pending"
     intake = next(s for s in view["steps"] if s["step"] == "intake")
     assert intake["started_at"] <= intake["finished_at"]
 
@@ -355,7 +360,7 @@ def test_status_map_tracks_retries_modules_and_skips():
     datasets.inputs[RAW] = sample_df()
     app = _app(deps)
     run_start(app, "t1")
-    view = run_resume(app, "t1", {**INTAKE, "country": "zz"})
+    view = run_resume(app, "t1", {**INTAKE, "country": "mex"})
     assert _statuses(view)["intake"] == "retry"
 
     run_resume(app, "t1", dict(INTAKE))
@@ -366,7 +371,7 @@ def test_status_map_tracks_retries_modules_and_skips():
     status = _statuses(view)
     assert status["prefilter"] == "skipped"
     assert status["run_module:1"] == status["run_module:2"] == "done"
-    assert status["approve_output"] == "waiting_for_human"
+    assert status["confirm_silver"] == "waiting_for_human"
 
 
 def test_progress_markdown_lists_the_flow():

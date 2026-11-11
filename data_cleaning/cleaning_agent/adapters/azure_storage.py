@@ -9,18 +9,21 @@ Never copy the key-in-code helpers (``azure_utils.py``) from other repositories.
 """
 
 import fnmatch
+import hashlib
 import logging
 import os
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from azure.core.exceptions import AzureError
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from azure.identity import DefaultAzureCredential
-from azure.storage.blob import BlobServiceClient, ExponentialRetry
+from azure.storage.blob import BlobServiceClient, ContentSettings, ExponentialRetry
 
 from cleaning_agent.adapters.resilience import CircuitBreaker
 from cleaning_agent.domain.models import UploadResult
+from cleaning_agent.domain.storage_errors import BlobExistsError
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +33,24 @@ CONNECTION_STRING_ENV = "AZURE_STORAGE_CONNECTION_STRING"
 
 class StorageNotConfiguredError(RuntimeError):
     pass
+
+
+def _md5(path: Path) -> bytes:
+    digest = hashlib.md5()
+    with path.open("rb") as handle:
+        while chunk := handle.read(8 * 1024 * 1024):
+            digest.update(chunk)
+    return digest.digest()
+
+
+def _properties(blob: Any, timeout_s: float) -> tuple[int, bytes | None] | None:
+    """(size, MD5) of a blob, or None when it does not exist."""
+    try:
+        props = blob.get_blob_properties(timeout=int(timeout_s))
+    except ResourceNotFoundError:
+        return None
+    md5 = props.content_settings.content_md5
+    return int(props.size), bytes(md5) if md5 else None
 
 
 class AzureBlobStorage:
@@ -76,30 +97,76 @@ class AzureBlobStorage:
             f"Set {ACCOUNT_URL_ENV} (recommended) or {CONNECTION_STRING_ENV} to upload to Azure"
         )
 
-    def upload(self, files: list[str], container: str, prefix: str) -> UploadResult:
+    def upload(
+        self, files: list[str], container: str, prefix: str, replace: bool = False
+    ) -> UploadResult:
+        """Uploads following the DWH guideline (Lineamientos Blob CP v1.1).
+
+        - A blob that already exists with the same size and MD5 is skipped.
+        - A different existing blob is only replaced with ``replace=True``.
+        - After each upload, size and MD5 are verified against the local file.
+        """
         uploaded: list[str] = []
+        skipped: list[str] = []
         with self._client() as service:
             container_client = service.get_container_client(container)
             for file in files:
                 path = Path(file)
                 blob_name = f"{prefix.strip('/')}/{path.name}"
+                blob = container_client.get_blob_client(blob_name)
+                local_md5 = _md5(path)
+                size = path.stat().st_size
+                try:
+                    remote = self.breaker.call(
+                        partial(_properties, blob, self.timeout_s)
+                    )
+                except AzureError as exc:
+                    raise RuntimeError(
+                        f"Checking {blob_name} failed: {exc.__class__.__name__}"
+                    ) from exc
+                if remote is not None:
+                    if remote == (size, local_md5):
+                        logger.info(
+                            "Already in %s/%s (same size and MD5): skipped",
+                            container,
+                            blob_name,
+                        )
+                        skipped.append(f"{container}/{blob_name}")
+                        continue
+                    if not replace:
+                        raise BlobExistsError(f"{container}/{blob_name}")
 
-                def send(path: Path = path, blob_name: str = blob_name) -> None:
+                def send(
+                    path: Path = path, blob: Any = blob, md5: bytes = local_md5
+                ) -> None:
                     with path.open("rb") as data:
-                        # overwrite=True: re-running the step replaces, never duplicates
-                        container_client.upload_blob(
-                            blob_name, data, overwrite=True, timeout=int(self.timeout_s)
+                        blob.upload_blob(
+                            data,
+                            overwrite=replace,
+                            timeout=int(self.timeout_s),
+                            content_settings=ContentSettings(
+                                content_md5=bytearray(md5)
+                            ),
                         )
 
                 try:
                     self.breaker.call(send)
+                    after = self.breaker.call(
+                        partial(_properties, blob, self.timeout_s)
+                    )
                 except AzureError as exc:
                     raise RuntimeError(
                         f"Upload of {path.name} failed: {exc.__class__.__name__}"
                     ) from exc
-                logger.info("Uploaded %s -> %s/%s", path.name, container, blob_name)
+                if after != (size, local_md5):
+                    raise RuntimeError(
+                        f"Verification failed for {container}/{blob_name}: size/MD5 differ from local"
+                    )
+                logger.info(
+                    "Uploaded and verified %s -> %s/%s", path.name, container, blob_name
+                )
                 uploaded.append(f"{container}/{blob_name}")
-        return UploadResult(uploaded=uploaded)
+        return UploadResult(uploaded=uploaded, skipped=skipped)
 
     def _match(self, names: list[str], pattern: str) -> list[str]:
         if "*" in pattern or "?" in pattern:

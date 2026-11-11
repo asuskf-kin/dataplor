@@ -1,0 +1,620 @@
+{
+  "origen": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv",
+  "archivo": "pdv_trad_on_ar_andina_20261109.parquet",
+  "fecha": "20261109",
+  "canal": "tradicional",
+  "analisis": "dataplor_clean",
+  "#": {
+    "total": 169986,
+    "utiles": 93561
+  },
+  "% datos utiles": 55.04,
+  "por que se limpiaron": {
+    "Module 2: Chain Filter": 65407,
+    "Module 3: BallTree Dedup": 73,
+    "Module 4: Hours & Fuzzy": 1364,
+    "Module 5: Final Regex": 8402,
+    "Module 6: Crowded Property": 407,
+    "Franquicia (review Claude)": 772
+  },
+  "alertas": [],
+  "POR VERIFICAR": [],
+  "insumos": [
+    "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/json_config.json"
+  ],
+  "franquicias": {
+    "marcadas": 772,
+    "eliminadas": 772,
+    "por_marca": {
+      "VIA BANA": 104,
+      "SEI TU": 80,
+      "ANDREA FRANCESCHINI": 69,
+      "LOMORO": 55,
+      "YO HELADERIAS": 55,
+      "FRIOTEKA": 49,
+      "EL HORNITO SANTIAGUENO": 43,
+      "CREMOLATTI": 35,
+      "TODO SUELTO": 32,
+      "DATE EL GUSTO": 27,
+      "BON O BON": 25,
+      "ENERGYM": 25,
+      "LOMITOS 2X1": 24,
+      "GO BAR": 23,
+      "SUPERMERCADOS TODO": 19,
+      "JUNIOR B": 18,
+      "SABLE PARIS": 18,
+      "MAS FARMA": 17,
+      "DIA": 15,
+      "LA FAROLA": 13,
+      "EL CLUB DE LA MILANESA": 12,
+      "ARCOR": 10,
+      "LE PAIN QUOTIDIEN": 2,
+      "RAPIPAGO": 1,
+      "TEA CONNECTION": 1
+    }
+  },
+  "modulos": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "capa": "silver",
+  "destinos": [
+    "prospecting-data/silver/ko/ar/andina/dataplor/20261109/pdv_trad_on_ar_andina_20261109.parquet"
+  ],
+  "espejo_local": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\pdv_trad_on_ar_andina_20261109.parquet",
+  "pais": "ar",
+  "bottler": "andina",
+  "premise": "on_premise",
+  "proceso": "Pipeline Data clean + review de franquicias",
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "code_version": "8c8dfe1-dirty",
+  "qa": {
+    "filas_leidas": 169986,
+    "filas_conservadas": 93561,
+    "filas_eliminadas": 76425,
+    "pct_eliminado": 44.96,
+    "eliminadas_por_motivo": {
+      "Module 2: Chain Filter": 65407,
+      "Module 3: BallTree Dedup": 73,
+      "Module 4: Hours & Fuzzy": 1364,
+      "Module 5: Final Regex": 8402,
+      "Module 6: Crowded Property": 407,
+      "Franquicia (review Claude)": 772
+    },
+    "checks": [
+      {
+        "check": "Los conteos cuadran (entrada = eliminados + conservados)",
+        "ok": true,
+        "detail": "169,986 = 76,425 + 93,561"
+      },
+      {
+        "check": "Quedó al menos un registro",
+        "ok": true,
+        "detail": "93,561 conservados"
+      },
+      {
+        "check": "El archivo tiene las filas conservadas",
+        "ok": true,
+        "detail": "archivo 93,561 vs conservados 93,561"
+      }
+    ],
+    "qa_ok": true
+  },
+  "linaje": [
+    {
+      "etapa": "fetch_raw",
+      "nombre": "Descarga del Dataplor raw",
+      "inicio": "2026-11-09T23:36:26+00:00",
+      "fin": "2026-11-09T23:51:53+00:00",
+      "entrada": [
+        {
+          "path": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet"
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": 1149025124,
+          "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "fetch_inputs",
+      "nombre": "Descarga de insumos (GeoJSON / clientes)",
+      "inicio": "2026-11-09T23:52:32+00:00",
+      "fin": "2026-11-09T23:52:33+00:00",
+      "entrada": [
+        {
+          "path": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson"
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": 2696,
+          "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "prefilter",
+      "nombre": "Pre-filtro geojson",
+      "inicio": "2026-11-10T00:51:11+00:00",
+      "fin": "2026-11-10T00:51:51+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": 1149025124,
+          "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": 2696,
+          "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_cleaned.csv",
+          "rows": 1245077,
+          "bytes": 1836000068,
+          "sha256": "fd0342e0586ae1e5fa3627f8c47ecb4988509d706cff07bd9a1a1ef154e00bfe",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "stage_bronze",
+      "nombre": "Bronze: espejo local + QA",
+      "inicio": "2026-11-10T00:51:52+00:00",
+      "fin": "2026-11-10T00:51:58+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_cleaned.csv",
+          "rows": null,
+          "bytes": 1836000068,
+          "sha256": "fd0342e0586ae1e5fa3627f8c47ecb4988509d706cff07bd9a1a1ef154e00bfe",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.csv",
+          "rows": 1245077,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109.csv"
+        }
+      ]
+    },
+    {
+      "etapa": "stage_bronze",
+      "nombre": "Bronze: espejo local + QA",
+      "inicio": "2026-11-10T13:29:48+00:00",
+      "fin": "2026-11-10T13:29:53+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_cleaned.csv",
+          "rows": null,
+          "bytes": 1836000068,
+          "sha256": "fd0342e0586ae1e5fa3627f8c47ecb4988509d706cff07bd9a1a1ef154e00bfe",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.parquet",
+          "rows": 1245077,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109.parquet"
+        }
+      ]
+    },
+    {
+      "etapa": "upload_bronze",
+      "nombre": "Subida a bronze",
+      "inicio": "2026-11-10T13:51:06+00:00",
+      "fin": "2026-11-10T14:15:11+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": 346571819,
+          "sha256": "ca361d69ee5cbf019493469aab9edaf8a94899e6267db048aabea52d312e436c",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": 6547,
+          "sha256": "8732c6460a744c73fbd1120b5b68b360e68524b3eef23869ab50d5375f8d0e41",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": 157349,
+          "sha256": "28b30eb4b880ce7495bd26c13b616912ae7691a10cf9fc72f896e5e5d3e9b2cb",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109.parquet"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109_metadata.json"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109_qa.html"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/dataplor_distance_ar_andina_20261109.parquet"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/dataplor_distance_ar_andina_20261109_metadata.json"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/dataplor_distance_ar_andina_20261109_qa.html"
+        }
+      ]
+    },
+    {
+      "etapa": "upload_bronze_raw_copy_fix",
+      "nombre": "Corrección: copia en la carpeta del raw (2026-10-15_ar.csv.parquet)",
+      "inicio": "2026-11-10T14:44:28+00:00",
+      "fin": "2026-11-10T14:55:56+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": 346571819,
+          "sha256": "ca361d69ee5cbf019493469aab9edaf8a94899e6267db048aabea52d312e436c",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": 6573,
+          "sha256": "3abad0882bb4aab04eae5c4fb80777324f196b55ea080968db0b142196b3760c",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": 157375,
+          "sha256": "2395a0d7b095ee40a1c4887aa737df8b8b5aff3d4d73949fb9ba5ffbb38eaee2",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/dataplor_distance_ar_andina_20261109.parquet"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/dataplor_distance_ar_andina_20261109_metadata.json"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/dataplor_distance_ar_andina_20261109_qa.html"
+        }
+      ]
+    },
+    {
+      "etapa": "replace_bronze_sidecars",
+      "nombre": "Reemplazo aprobado: sidecars de bronze con el destino de copia corregido",
+      "inicio": "2026-11-10T15:00:56+00:00",
+      "fin": "2026-11-10T15:00:58+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": 6573,
+          "sha256": "3abad0882bb4aab04eae5c4fb80777324f196b55ea080968db0b142196b3760c",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": 157375,
+          "sha256": "2395a0d7b095ee40a1c4887aa737df8b8b5aff3d4d73949fb9ba5ffbb38eaee2",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109_metadata.json"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109_qa.html"
+        }
+      ]
+    },
+    {
+      "etapa": "upload_bronze_raw_copy_fix_2",
+      "nombre": "Corrección: copia en la carpeta del raw, subcarpeta distance/20261109",
+      "inicio": "2026-11-10T15:02:28+00:00",
+      "fin": "2026-11-10T15:14:45+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": 346571819,
+          "sha256": "ca361d69ee5cbf019493469aab9edaf8a94899e6267db048aabea52d312e436c",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": 6591,
+          "sha256": "d70dd4d278b312bc5a56a11dd7fcbd6696c5ccf27dd62b9e359be274523388cc",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": 157393,
+          "sha256": "0a75a648da75fd497929612c73671a46e3d8d682fb8276f9353a1cd5f2caddc3",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "dataplor_distance_ar_andina_20261109.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/distance/20261109/dataplor_distance_ar_andina_20261109.parquet"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_metadata.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/distance/20261109/dataplor_distance_ar_andina_20261109_metadata.json"
+        },
+        {
+          "path": "dataplor_distance_ar_andina_20261109_qa.html",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/distance/20261109/dataplor_distance_ar_andina_20261109_qa.html"
+        }
+      ]
+    },
+    {
+      "etapa": "front_dataplor",
+      "nombre": "Resultado del Front (descargado al espejo local)",
+      "inicio": "2026-11-10T17:16:13+00:00",
+      "fin": "2026-11-10T17:23:40+00:00",
+      "entrada": [
+        {
+          "path": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv"
+        },
+        {
+          "path": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/json_config.json",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/json_config.json"
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\dataplor_cleaned_2.csv",
+          "rows": null,
+          "bytes": 315749543,
+          "sha256": "22cfa34415b9619e8c2a3d445d01a158125286f847e07422b1b616cf286c02cb",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\json_config.json",
+          "rows": null,
+          "bytes": 1217,
+          "sha256": "3667dc3cc43e90f869be5cc07c77af92f59a8d60b7a70f90105c06f919e5b1c3",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "stage_silver",
+      "nombre": "Silver: espejo local + QA",
+      "inicio": "2026-11-10T18:23:57+00:00",
+      "fin": "2026-11-10T18:23:58+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\runs\\dataplor-20261109-182659-d5b4\\06_crowded_properties_filtered.parquet",
+          "rows": null,
+          "bytes": 23451188,
+          "sha256": "82c0d056e1a51b70b8484927698edbcfd578c7b317f8debc8d3089dba6494ebe",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\dataplor_ar_andina_20261109.parquet",
+          "rows": 93561,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/silver/ko/ar/andina/dataplor/20261109/dataplor_ar_andina_20261109.parquet"
+        }
+      ]
+    },
+    {
+      "etapa": "stage_silver",
+      "nombre": "Silver: espejo local + QA",
+      "inicio": "2026-11-10T18:36:05+00:00",
+      "fin": "2026-11-10T18:36:06+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\runs\\dataplor-20261109-182659-d5b4\\06_crowded_properties_filtered.parquet",
+          "rows": null,
+          "bytes": 23451188,
+          "sha256": "82c0d056e1a51b70b8484927698edbcfd578c7b317f8debc8d3089dba6494ebe",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\pdv_trad_on_ar_andina_20261109.parquet",
+          "rows": 93561,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/silver/ko/ar/andina/dataplor/20261109/pdv_trad_on_ar_andina_20261109.parquet"
+        }
+      ]
+    },
+    {
+      "etapa": "pipeline_data_clean",
+      "nombre": "Pipeline Data clean (módulos 1, 2, 3, 4, 5, 6)",
+      "inicio": "2026-11-10T18:36:06+00:00",
+      "fin": "2026-11-10T18:36:09+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\dataplor_cleaned_2.csv",
+          "rows": 169986,
+          "bytes": 315749543,
+          "sha256": "22cfa34415b9619e8c2a3d445d01a158125286f847e07422b1b616cf286c02cb",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise.csv",
+          "rows": 94333,
+          "bytes": 174797178,
+          "sha256": "23447f0e40cd6ba1319807b695165b79a9894591f8b9c4c2c767bb555ab91af6",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_v2.csv",
+          "rows": null,
+          "bytes": 174797178,
+          "sha256": "23447f0e40cd6ba1319807b695165b79a9894591f8b9c4c2c767bb555ab91af6",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_sin_franquicias.csv",
+          "rows": null,
+          "bytes": 173107738,
+          "sha256": "450a7e918307d0b78ff61ed286e397c9cf0e6b5e4056b9ad4ecc9e6285888a55",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "executive_report",
+      "nombre": "Reporte ejecutivo (ex report.ipynb)",
+      "inicio": "2026-11-10T18:36:09+00:00",
+      "fin": "2026-11-10T18:36:30+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_sin_franquicias.csv",
+          "rows": null,
+          "bytes": 173107738,
+          "sha256": "450a7e918307d0b78ff61ed286e397c9cf0e6b5e4056b9ad4ecc9e6285888a55",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\reports\\dataplor_final_pipeline_output_ar_on_premise_on_premise_sin_franquicias.csv",
+          "rows": null,
+          "bytes": 102634816,
+          "sha256": "3311ca77288eb494736e2c682c86803b1883d41b3b6df7d3dbc390acd27a68d6",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\reports\\reporte_ejecutivo_ar_on_premise_andina_20261110_133609.xlsx",
+          "rows": null,
+          "bytes": 71241,
+          "sha256": "861e87ab01c857cd22f7817b598e58c313ef8e81b9fd68e49f761e53a676c6c5",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\reports\\reporte_ejecutivo_ar_on_premise_andina_20261110_133609.html",
+          "rows": null,
+          "bytes": 704772,
+          "sha256": "7e5ea1fa900b4b4fae80994959ed3358668e1bc2dd8116fe5fd2d2db54cce4b6",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\reports\\reporte_ejecutivo_ar_on_premise_andina_20261110_133609.pdf",
+          "rows": null,
+          "bytes": 476122,
+          "sha256": "7b6f35fd92c6a55506fc90ddd686f93f8c0eb1a430cdd7496d788e2b93b1a189",
+          "blob": null
+        }
+      ]
+    }
+  ]
+}

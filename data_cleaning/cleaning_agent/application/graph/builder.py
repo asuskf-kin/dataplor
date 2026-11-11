@@ -26,7 +26,10 @@ from typing import Literal
 from langgraph.graph import END, START, StateGraph
 
 from cleaning_agent.application.graph import delivery_nodes as delivery
+from cleaning_agent.application.graph import franchise_nodes as franchise
+from cleaning_agent.application.graph import gold_nodes as gold
 from cleaning_agent.application.graph import nodes
+from cleaning_agent.application.graph import priorizacion_nodes as prioritization
 from cleaning_agent.application.graph import warehouse_nodes as warehouse
 from cleaning_agent.application.graph.nodes import Dependencies
 from cleaning_agent.application.graph.progress import tracked
@@ -124,6 +127,55 @@ def _after_patterns_update(max_attempts: int) -> Callable[[CleaningState], str]:
     return route
 
 
+def _after_layer_upload(state: CleaningState) -> str:
+    if state.get("status") == "failed":
+        return "failed"
+    return "ask_again" if state.get("errors") else "continue"
+
+
+def _after_franchise_review(max_attempts: int) -> Callable[[CleaningState], str]:
+    def route(state: CleaningState) -> str:
+        if state.get("errors"):
+            return _retry_or_give_up(state, max_attempts)
+        return franchise.after_franchise_review(state)
+
+    return route
+
+
+def _after_priorizacion_answer(max_attempts: int) -> Callable[[CleaningState], str]:
+    def route(state: CleaningState) -> str:
+        if state.get("errors"):
+            return _retry_or_give_up(state, max_attempts)
+        return prioritization.after_ask_priorizacion(state)
+
+    return route
+
+
+def _after_layer_answer_to(
+    _next: str, max_attempts: int
+) -> Callable[[CleaningState], str]:
+    # Same decision as bronze: approved -> upload, declined -> the run stops (kept local)
+    return _after_layer_answer(max_attempts)
+
+
+def _after_layer_upload_to(_next: str) -> Callable[[CleaningState], str]:
+    return _after_layer_upload
+
+
+def _after_stage_gold(state: CleaningState) -> str:
+    pending = state.get("pending_upload") or {}
+    return "continue" if pending.get("layer") == Layer.GOLD.value else "skip"
+
+
+def _after_datamatch_loop(max_attempts: int) -> Callable[[CleaningState], str]:
+    def route(state: CleaningState) -> str:
+        if state.get("errors"):
+            return _retry_or_give_up(state, max_attempts)
+        return "done" if state.get("datamatch_loop_done") else "iterate"
+
+    return route
+
+
 def give_up(state: CleaningState) -> nodes.Update:
     """Done when a run with too many invalid answers is marked cancelled."""
     return {
@@ -161,16 +213,34 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     _add(g, "load_input", nodes.make_load_input(deps))
     _add(g, "run_module", nodes.make_run_module(deps))
     _add(g, "finalize", nodes.make_finalize(deps))
-    _add(g, "approve_output", nodes.approve_output)
+    _add(g, "prepare_franchise_review", franchise.make_prepare_franchise_review(deps))
+    _add(g, "franchise_review", franchise.make_franchise_review(deps))
+    _add(g, "confirm_franchises", franchise.confirm_franchises)
+    _add(g, "stage_silver", warehouse.make_stage_silver(deps))
+    _add(g, "confirm_silver", warehouse.make_confirm_layer(deps, Layer.SILVER))
+    _add(g, "upload_silver", warehouse.make_upload_layer(deps, Layer.SILVER))
+    _add(g, "stage_gold", warehouse.make_stage_gold(deps))
+    _add(g, "confirm_gold", warehouse.make_confirm_layer(deps, Layer.GOLD))
+    _add(g, "upload_gold", warehouse.make_upload_layer(deps, Layer.GOLD))
     _add(g, "publish", nodes.make_publish(deps))
     _add(g, "executive_report", delivery.make_executive_report(deps))
-    _add(g, "ask_datamatch", delivery.ask_datamatch)
     _add(g, "front_datamatch", delivery.make_front_datamatch(deps))
-    _add(g, "qa_explore", delivery.make_qa_explore(deps))
-    _add(g, "choose_thresholds", delivery.make_choose_thresholds(deps))
-    _add(g, "qa_run", delivery.make_qa_run(deps))
-    _add(g, "confirm_upload", delivery.make_confirm_upload(deps))
-    _add(g, "upload", delivery.make_upload(deps))
+    _add(g, "fetch_datamatch", warehouse.make_fetch_datamatch(deps))
+    _add(g, "stage_datamatch_step", warehouse.make_stage_datamatch_step(deps))
+    _add(g, "confirm_datamatch_step", warehouse.make_confirm_layer(deps, Layer.SILVER))
+    _add(g, "upload_datamatch_step", warehouse.make_upload_layer(deps, Layer.SILVER))
+    _add(g, "next_datamatch_step", warehouse.make_next_datamatch_step(deps))
+    _add(g, "stage_prospects", warehouse.make_stage_prospects(deps))
+    _add(g, "confirm_prospects", warehouse.make_confirm_layer(deps, Layer.GOLD))
+    _add(g, "upload_prospects", warehouse.make_upload_layer(deps, Layer.GOLD))
+    _add(g, "ask_priorizacion", prioritization.make_ask_priorizacion(deps))
+    _add(g, "run_priorizacion", prioritization.make_run_priorizacion(deps))
+    _add(g, "stage_priorizacion", prioritization.make_stage_priorizacion(deps))
+    _add(g, "confirm_priorizacion", warehouse.make_confirm_layer(deps, Layer.BRONZE))
+    _add(g, "upload_priorizacion", warehouse.make_upload_layer(deps, Layer.BRONZE))
+    _add(g, "stage_gold_package", gold.make_stage_gold_package(deps))
+    _add(g, "confirm_gold_package", warehouse.make_confirm_layer(deps, Layer.GOLD))
+    _add(g, "upload_gold_package", warehouse.make_upload_layer(deps, Layer.GOLD))
     _add(g, "build_lineage", delivery.make_build_lineage(deps))
     _add(g, "give_up", give_up)
 
@@ -237,7 +307,9 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
         },
     )
     g.add_conditional_edges(
-        "upload_bronze", _after_step, {"continue": "front_dataplor", "failed": END}
+        "upload_bronze",
+        _after_layer_upload,
+        {"continue": "front_dataplor", "ask_again": "confirm_bronze", "failed": END},
     )
     g.add_conditional_edges(
         "front_dataplor",
@@ -274,61 +346,207 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
         _after_module,
         {"run_module": "run_module", "finalize": "finalize"},
     )
-    g.add_edge("finalize", "approve_output")
+    g.add_edge("finalize", "prepare_franchise_review")
+    g.add_edge("prepare_franchise_review", "franchise_review")
     g.add_conditional_edges(
-        "approve_output",
-        _after_output(deps.max_attempts),
+        "franchise_review",
+        _after_franchise_review(deps.max_attempts),
         {
-            "publish": "publish",
-            "ask_again": "approve_output",
+            "confirm": "confirm_franchises",
+            "skip": "stage_silver",
+            "ask_again": "franchise_review",
             "give_up": "give_up",
-            "rejected": END,
         },
     )
+    g.add_conditional_edges(
+        "confirm_franchises",
+        _after_answer("stage_silver", deps.max_attempts),
+        {
+            "stage_silver": "stage_silver",
+            "ask_again": "confirm_franchises",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "stage_silver", _after_step, {"continue": "publish", "failed": END}
+    )
+    g.add_conditional_edges(
+        "confirm_silver",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_silver",
+            "stop": END,
+            "ask_again": "confirm_silver",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_silver",
+        _after_layer_upload_to("stage_gold"),
+        {"continue": "stage_gold", "ask_again": "confirm_silver", "failed": END},
+    )
+    # Gold: the executive Excel + its metadata (user, 2026-11-10); nothing there -> skip
+    g.add_conditional_edges(
+        "stage_gold",
+        _after_stage_gold,
+        {"continue": "confirm_gold", "skip": "front_datamatch"},
+    )
+    g.add_conditional_edges(
+        "confirm_gold",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_gold",
+            "stop": END,
+            "ask_again": "confirm_gold",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_gold",
+        _after_layer_upload_to("front_datamatch"),
+        {"continue": "front_datamatch", "ask_again": "confirm_gold", "failed": END},
+    )
+    # The local CSV and the executive report (funnel, PDF, HTML) are built before the
+    # silver approval so the person validates everything together (user, 2026-11-10).
     g.add_edge("publish", "executive_report")
-    g.add_edge("executive_report", "ask_datamatch")
-    g.add_conditional_edges(
-        "ask_datamatch",
-        _after_datamatch_choice(deps.max_attempts),
-        {
-            "front_datamatch": "front_datamatch",
-            "confirm_upload": "confirm_upload",
-            "ask_again": "ask_datamatch",
-            "give_up": "give_up",
-        },
-    )
+    g.add_edge("executive_report", "confirm_silver")
     g.add_conditional_edges(
         "front_datamatch",
-        _after_answer("qa_explore", deps.max_attempts),
+        _after_answer("fetch_datamatch", deps.max_attempts),
         {
-            "qa_explore": "qa_explore",
+            "fetch_datamatch": "fetch_datamatch",
             "ask_again": "front_datamatch",
             "give_up": "give_up",
         },
     )
+    # Datamatch loop (user, 2026-11-11): each Front step drops the matched clients
+    # from the base, goes to silver qa_process and repeats until the person says done
     g.add_conditional_edges(
-        "qa_explore", _after_step, {"continue": "choose_thresholds", "failed": END}
+        "fetch_datamatch",
+        _after_step,
+        {"continue": "stage_datamatch_step", "failed": END},
     )
     g.add_conditional_edges(
-        "choose_thresholds",
-        _after_answer("qa_run", deps.max_attempts),
-        {"qa_run": "qa_run", "ask_again": "choose_thresholds", "give_up": "give_up"},
+        "stage_datamatch_step",
+        _after_step,
+        {"continue": "confirm_datamatch_step", "failed": END},
     )
     g.add_conditional_edges(
-        "qa_run", _after_step, {"continue": "confirm_upload", "failed": END}
-    )
-    g.add_conditional_edges(
-        "confirm_upload",
-        _after_upload_decision(deps.max_attempts),
+        "confirm_datamatch_step",
+        _after_layer_answer_to("upload", deps.max_attempts),
         {
-            "upload": "upload",
-            "ask_again": "confirm_upload",
+            "upload": "upload_datamatch_step",
+            "stop": END,
+            "ask_again": "confirm_datamatch_step",
             "give_up": "give_up",
-            "kept_local": "build_lineage",
         },
     )
     g.add_conditional_edges(
-        "upload", _after_step, {"continue": "build_lineage", "failed": END}
+        "upload_datamatch_step",
+        _after_layer_upload_to("next_datamatch_step"),
+        {
+            "continue": "next_datamatch_step",
+            "ask_again": "confirm_datamatch_step",
+            "failed": END,
+        },
+    )
+    g.add_conditional_edges(
+        "next_datamatch_step",
+        _after_datamatch_loop(deps.max_attempts),
+        {
+            "iterate": "front_datamatch",
+            "done": "stage_prospects",
+            "ask_again": "next_datamatch_step",
+            "give_up": "give_up",
+        },
+    )
+    # Loop done (user, 2026-11-11): the prospects file is the first data in gold and
+    # the input of priorización; the old QA-threshold steps were replaced by the loop
+    g.add_conditional_edges(
+        "stage_prospects", _after_step, {"continue": "confirm_prospects", "failed": END}
+    )
+    g.add_conditional_edges(
+        "confirm_prospects",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_prospects",
+            "stop": END,
+            "ask_again": "confirm_prospects",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_prospects",
+        _after_layer_upload_to("ask_priorizacion"),
+        {
+            "continue": "ask_priorizacion",
+            "ask_again": "confirm_prospects",
+            "failed": END,
+        },
+    )
+    g.add_conditional_edges(
+        "ask_priorizacion",
+        _after_priorizacion_answer(deps.max_attempts),
+        {
+            "run": "run_priorizacion",
+            "skip": "build_lineage",
+            "ask_again": "ask_priorizacion",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "run_priorizacion",
+        _after_step,
+        {"continue": "stage_priorizacion", "failed": END},
+    )
+    g.add_conditional_edges(
+        "stage_priorizacion",
+        _after_step,
+        {"continue": "confirm_priorizacion", "failed": END},
+    )
+    g.add_conditional_edges(
+        "confirm_priorizacion",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_priorizacion",
+            "stop": END,
+            "ask_again": "confirm_priorizacion",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_priorizacion",
+        _after_layer_upload_to("stage_gold_package"),
+        {
+            "continue": "stage_gold_package",
+            "ask_again": "confirm_priorizacion",
+            "failed": END,
+        },
+    )
+    # Gold delivery package (user, 2026-11-11): modelled on the approved Golfo package
+    g.add_conditional_edges(
+        "stage_gold_package",
+        _after_step,
+        {"continue": "confirm_gold_package", "failed": END},
+    )
+    g.add_conditional_edges(
+        "confirm_gold_package",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_gold_package",
+            "stop": END,
+            "ask_again": "confirm_gold_package",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_gold_package",
+        _after_layer_upload_to("build_lineage"),
+        {
+            "continue": "build_lineage",
+            "ask_again": "confirm_gold_package",
+            "failed": END,
+        },
     )
     g.add_edge("build_lineage", END)
     g.add_edge("give_up", END)

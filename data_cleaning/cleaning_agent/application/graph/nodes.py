@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+import polars as pl
 from langchain_core.runnables import RunnableConfig
 from langgraph.config import get_stream_writer
 from langgraph.types import interrupt
@@ -30,8 +31,10 @@ from cleaning_agent.application.graph.state import CleaningState
 from cleaning_agent.application.ports import (
     AuditPort,
     DatamatchQAPort,
+    DatamatchStepPort,
     DatasetPort,
     ExecutiveReportPort,
+    GoldPackagePort,
     LayerStagingPort,
     LineagePort,
     PatternsPort,
@@ -40,6 +43,7 @@ from cleaning_agent.application.ports import (
     StoragePort,
 )
 from cleaning_agent.domain.cleaning.step_metrics import analyze_step_drop
+from cleaning_agent.domain.franchises import mark_franchises
 from cleaning_agent.domain.lineage import ArtifactRef, StageRecord, now_iso
 from cleaning_agent.domain.models import (
     INPUT_MODELS,
@@ -61,6 +65,7 @@ from cleaning_agent.domain.models import (
     raw_blob_location,
 )
 from cleaning_agent.domain.patterns_policy import needs_update
+from cleaning_agent.domain.warehouse import Layer, layer_prefix
 from cleaning_agent.observability import CorrelationAdapter
 
 Update = dict[str, Any]
@@ -94,6 +99,8 @@ class Dependencies:
     priorizacion: PriorizacionPort
     staging: LayerStagingPort
     patterns: PatternsPort
+    datamatch_steps: DatamatchStepPort
+    gold_package: GoldPackagePort
     defaults: Mapping[CleaningMode, dict[str, Any]]
     default_modules: list[int]
     items_to_track: list[str] = field(default_factory=list)
@@ -103,16 +110,39 @@ class Dependencies:
     front_url: str = ""
     # Default container ONLY for the raw Dataplor (not for GeoJSON, clients or uploads)
     raw_container: str = "dataplorraw"
+    # Default container of the Front step's result (user rule)
+    front_container: str = "prospection-datacleaning"
     raw_local_dir: Path = Path("data/raw")
     # Production DWH (user-defined): container, path template and local mirror root
     dwh_container: str = "prospecting-data"
-    dwh_path_template: str = "{layer}/ko/{pais}/{bottler}/{fecha}"
+    dwh_path_template: str = "{layer}/ko/{pais}/{bottler}/dataplor/{fecha}"
     mirror_root: Path = Path("data")
     # Local folder of each run: intermediate steps and the lineage document
     runs_dir: Path = Path("data/runs")
     # Defaults for the Front (datamatch) form and the Azure upload form
     datamatch_defaults: Mapping[str, Any] = field(default_factory=dict)
     upload_defaults: Mapping[str, Any] = field(default_factory=dict)
+    # Datamatch loop: a client with total_score above this already has its Dataplor
+    # point and leaves the client base (user, 2026-11-11: "mayor 0.5")
+    datamatch_step_threshold: float = 0.5
+    # Priorización: parameters donor (no Argentina YAML: Golfo is single-base, same
+    # params) and where its outputs go (user, 2026-11-11)
+    priorizacion_base_config: str = "mexico_golfo.yaml"
+    priorizacion_output_template: str = (
+        "{layer}/ko/{pais}/{bottler}/providers/"
+        "dataplor_on_premise_priority_{bottler}_{pais_nombre}/{fecha}"
+    )
+    # Gold package (deck cover and contacts; client base columns it reads)
+    gold_client_label: str = "Coca-Cola {bottler}"
+    gold_contacts: tuple[str, ...] = ()
+    gold_client_columns: Mapping[str, Any] = field(default_factory=dict)
+    # Gold folder of the prospects (user, 2026-11-11): entity prospecting-data
+    prospects_template: str = "{layer}/ko/{pais}/{bottler}/prospecting-data/{fecha}"
+    # Silver folder of each loop step; the step folder (paso1, ...) goes below it.
+    # Entity data_match_process, not dataplor: it is the Front's Datamatch (user rule)
+    qa_process_template: str = (
+        "{layer}/ko/{pais}/{bottler}/data_match_process/qa_process/{fecha}"
+    )
 
 
 def _logger(state: CleaningState) -> CorrelationAdapter:
@@ -688,7 +718,8 @@ def make_finalize(deps: Dependencies) -> NodeFn:
             state.get("audit_file"), final_df, state.get("items_to_track", [])
         )
         metrics = [StepMetric.model_validate(m) for m in state.get("metrics", [])]
-        report = deps.audit.html_report(metrics)
+        # The drop report is a silver deliverable (user, 2026-11-10)
+        report = deps.audit.html_report(metrics, layer_dir(deps, state, Layer.SILVER))
         summary = {
             "prefilter": state.get("prefilter"),
             "input_rows": state.get("input_rows", 0),
@@ -734,8 +765,30 @@ def make_publish(deps: Dependencies) -> NodeFn:
         """Done when the final CSV is written to inputs.output_csv (rerun-safe: overwrites)."""
         started = now_iso()
         df = deps.datasets.load_step(str(state["current_path"]))
-        output = deps.datasets.publish(df, str((state["inputs"] or {})["output_csv"]))
-        _logger(state).info("Published %s rows -> %s", f"{df.height:,}", output)
+        output_csv = str((state["inputs"] or {})["output_csv"])
+        franchises = state.get("franchises") or {}
+        flags = franchises.get("flags") or {}
+        extra: list[str] = []
+        if flags:
+            # Marks are columns (es_franquicia / franquicia_marca); _v2 is the marked copy
+            # the executive report reads to count the manual deletions
+            df = mark_franchises(df, flags)
+            extra.append(
+                deps.datasets.publish(df, output_csv.replace(".csv", "_v2.csv"))
+            )
+        output = deps.datasets.publish(df, output_csv)
+        final = output
+        if flags and franchises.get("remove"):
+            kept = df.filter(pl.col("es_franquicia") == "No")
+            dropped = df.filter(pl.col("es_franquicia") == "Sí").with_columns(
+                pl.lit("Franquicia (review Claude)").alias("drop_reason")
+            )
+            deps.datasets.save_dropped(df, kept, "07_franchise_review", dropped)
+            final = deps.datasets.publish(
+                kept, output_csv.replace(".csv", "_sin_franquicias.csv")
+            )
+            extra.append(final)
+        _logger(state).info("Published %s rows -> %s", f"{df.height:,}", final)
         lineage = record_stage(
             deps,
             state,
@@ -750,13 +803,14 @@ def make_publish(deps: Dependencies) -> NodeFn:
                     rows=state.get("input_rows"),
                 )
             ],
-            [deps.lineage.describe(output, rows=df.height)],
+            [deps.lineage.describe(output, rows=df.height)]
+            + [deps.lineage.describe(path) for path in extra],
             {
                 "steps": (state.get("summary") or {}).get("steps", []),
                 "approved_note": state.get("note"),
             },
         )
-        return {"status": "published", "output_path": output, **lineage}
+        return {"status": "published", "output_path": final, **lineage}
 
     return publish
 
@@ -840,3 +894,14 @@ def make_update_patterns(deps: Dependencies) -> NodeFn:
         }
 
     return update_patterns
+
+
+def layer_dir(deps: Dependencies, state: CleaningState, layer: Layer) -> Path:
+    """Local mirror folder of one DWH layer for this run (never a path of our own)."""
+    return deps.mirror_root / layer_prefix(
+        layer,
+        state.get("country", ""),
+        state.get("bottler", ""),
+        str(state.get("run_date", "")),
+        deps.dwh_path_template,
+    )

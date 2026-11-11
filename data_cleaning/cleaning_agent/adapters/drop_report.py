@@ -1,105 +1,117 @@
-"""HTML drop report of a run (data/reports)."""
+"""HTML drop report of a run (silver layer of the DWH mirror), on-brand (skill brand-guidelines-kin).
 
+Self-contained: fonts, tokens and logo are embedded by ``KinBrand`` and the chart is
+plain CSS bars, so the page has no script and loads nothing from the internet.
+"""
+
+import html
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
+from cleaning_agent.adapters.brand import LOGO_FORMAL_LIGHT, PAGE_CSS, KinBrand
+
 logger = logging.getLogger(__name__)
 
-
-def generate_html_report(metrics_list: list[dict[str, Any]], data_dir: Path) -> Path:
-    """
-    Generates an interactive HTML file with a bar chart (Chart.js)
-    showing filtered records per step and the Top 5 discarded items.
-    """
-    reports_dir = data_dir.parent / "reports"
-    reports_dir.mkdir(parents=True, exist_ok=True)
-
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    html_file = reports_dir / f"pipeline_report_{timestamp}.html"
-
-    steps_labels = [m["step_name"] for m in metrics_list]
-    dropped_data = [m["dropped_count"] for m in metrics_list]
-
-    html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Pipeline Report</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f8f9fa; color: #333; margin: 0; padding: 20px; }}
-        .container {{ max-width: 1000px; margin: auto; background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }}
-        h1 {{ color: #2c3e50; border-bottom: 2px solid #eaeaea; padding-bottom: 10px; }}
-        .chart-container {{ position: relative; height: 400px; width: 100%; margin-top: 20px; }}
-        .step-card {{ background: #fdfdfd; border-left: 4px solid #3498db; padding: 15px; margin: 15px 0; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,0.02); }}
-        .step-title {{ font-weight: bold; color: #2980b9; font-size: 1.1em; }}
-        ul {{ margin: 5px 0; padding-left: 20px; list-style-type: none; }}
-        li {{ font-size: 0.95em; color: #444; margin-bottom: 4px; }}
-        .count-badge {{ background-color: #e74c3c; color: white; padding: 2px 8px; border-radius: 12px; font-weight: bold; font-size: 0.85em; margin-right: 8px; display: inline-block; min-width: 20px; text-align: center; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>📊 Pipeline Execution Report</h1>
-        <p>Generated at: <strong>{time.strftime("%Y-%m-%d %H:%M:%S")}</strong></p>
-        
-        <div class="chart-container">
-            <canvas id="reportChart"></canvas>
-        </div>
-
-        <h2>Step Details (Top 5 Filtered Records)</h2>
+# Report-specific rules on top of the shared page language; tokens and rem only.
+# The chart sits on a dark panel because Kin Yellow bars have no contrast on white.
+REPORT_CSS = """
+.chart{background:var(--ka-color-black);color:var(--ka-color-white);border-radius:var(--ka-radius-box);
+padding:1.5rem 1.75rem;margin-bottom:1.75rem}
+.chart h2{font-family:var(--ka-font-display);font-size:var(--ka-size-h3);font-weight:var(--ka-weight-medium);margin:0 0 .25rem}
+.chart .sub{color:var(--ka-color-gray-3);font-size:var(--ka-size-caption);margin:0 0 1.25rem}
+.bars{display:grid;grid-template-columns:minmax(8rem,14rem) 1fr auto;gap:.625rem 1rem;align-items:center}
+.bars .name{color:var(--ka-color-gray-3);font-size:var(--ka-size-caption);overflow-wrap:anywhere}
+.bars .track{background:var(--ka-color-gray-4);border-radius:var(--ka-radius-pill);height:.75rem;overflow:hidden}
+.bars .fill{background:var(--ka-chart-1);height:100%;border-radius:var(--ka-radius-pill)}
+.bars .val{font-family:var(--ka-font-display);font-weight:var(--ka-weight-medium);text-align:right}
+.card .meta{color:var(--ka-color-text-secondary);font-size:var(--ka-size-caption);margin:0 0 .75rem}
+.card ul{margin:0;padding:0;list-style:none}
+.card li{display:flex;gap:.75rem;align-items:baseline;padding:.25rem 0}
+.count{font-family:var(--ka-font-display);font-weight:var(--ka-weight-bold);min-width:3rem;text-align:right}
+.empty{color:var(--ka-color-text-secondary);font-size:var(--ka-size-caption);margin:0}
 """
 
-    for m in metrics_list:
-        html_content += f"""
-        <div class="step-card">
-            <div class="step-title">{m["step_name"]}</div>
-            <p>Filtered records in this step: <strong>{m["dropped_count"]:,}</strong> | Remaining: {m["remaining_count"]:,}</p>
+
+def _e(value: Any) -> str:
+    # Step names and dropped business names are data: escape them, never trust them
+    return html.escape(str(value))
+
+
+def _bars(metrics_list: list[dict[str, Any]]) -> str:
+    peak = max((int(m["dropped_count"]) for m in metrics_list), default=0) or 1
+    return "".join(
+        f"<div class='name'>{_e(m['step_name'])}</div>"
+        f"<div class='track'><div class='fill' style='width:{int(m['dropped_count']) / peak * 100:.1f}%'></div></div>"
+        f"<div class='val'>{int(m['dropped_count']):,}</div>"
+        for m in metrics_list
+    )
+
+
+def _step_card(m: dict[str, Any]) -> str:
+    top = m["top_dropped"]
+    items = (
+        "<ul>"
+        + "".join(
+            f"<li><span class='count'>{int(freq):,}</span><code>{_e(name)}</code></li>"
+            for name, freq in top
+        )
+        + "</ul>"
+        if top
+        else "<p class='empty'>No prominent exclusions recorded.</p>"
+    )
+    return (
+        f"<section class='card'><h2>{_e(m['step_name'])}</h2>"
+        f"<p class='meta'>Filtered in this step: {int(m['dropped_count']):,} · "
+        f"Remaining: {int(m['remaining_count']):,}</p>{items}</section>"
+    )
+
+
+def render_html_report(
+    metrics_list: list[dict[str, Any]], brand: KinBrand, generated_at: str
+) -> str:
+    """The page itself, separate from the file write so it can be checked in tests."""
+    total = sum(int(m["dropped_count"]) for m in metrics_list)
+    remaining = int(metrics_list[-1]["remaining_count"]) if metrics_list else 0
+    stats = "".join(
+        f"<div class='stat'><div class='label'>{label}</div><div class='value'>{value}</div></div>"
+        for label, value in (
+            ("Steps", f"{len(metrics_list):,}"),
+            ("Filtered records", f"{total:,}"),
+            ("Remaining", f"{remaining:,}"),
+        )
+    )
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pipeline Report</title>
+<style>{brand.head_css}{PAGE_CSS}{REPORT_CSS}</style></head><body><div class="page">
+<div class="top">{brand.logo(LOGO_FORMAL_LIGHT)}<span class="ka-site">kinanalytics.com</span></div>
+<section class="band">
+<p class="eyebrow">Dataplor cleaning · drop report</p>
+<h1>Pipeline execution report</h1>
+<p class="sub">Generated at {_e(generated_at)}</p>
+</section>
+<div class="stats">{stats}</div>
+<section class="chart"><h2>Filtered records per step</h2>
+<p class="sub">Each record is counted once, in the step that removed it</p>
+<div class="bars">{_bars(metrics_list)}</div></section>
+{"".join(_step_card(m) for m in metrics_list)}
+<div class="foot">{brand.logo(LOGO_FORMAL_LIGHT)}<span class="ka-site">kinanalytics.com</span></div>
+</div></body></html>
 """
-        if m["top_dropped"]:
-            html_content += "<ul>"
-            for name, freq in m["top_dropped"]:
-                # Replaced "({freq} times)" with a clean numerical badge and format
-                html_content += f"<li><span class='count-badge'>{freq}</span> <code>{name}</code></li>"
-            html_content += "</ul>"
-        else:
-            html_content += "<p style='color: #888; font-size: 0.9em;'>No prominent exclusions recorded.</p>"
-        html_content += "</div>"
 
-    html_content += f"""
-    </div>
-    <script>
-        const ctx = document.getElementById('reportChart').getContext('2d');
-        const reportChart = new Chart(ctx, {{
-            type: 'bar',
-            data: {{
-                labels: {steps_labels},
-                datasets: [{{
-                    label: 'Filtered Records',
-                    data: {dropped_data},
-                    backgroundColor: 'rgba(52, 152, 219, 0.7)',
-                    borderColor: 'rgba(41, 128, 185, 1)',
-                    borderWidth: 1,
-                    borderRadius: 4
-                }}]
-            }},
-            options: {{
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {{
-                    y: {{ beginAtZero: true }}
-                }}
-            }}
-        }});
-    </script>
-</body>
-</html>
-"""
 
-    with open(html_file, "w", encoding="utf-8") as f:
-        f.write(html_content)
-
-    logger.info(f"Interactive HTML report generated at: {html_file}")
+def generate_html_report(
+    metrics_list: list[dict[str, Any]], out_dir: Path, brand: KinBrand
+) -> Path:
+    """Writes the drop report (filtered records per step + top 5 dropped per step)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    html_file = out_dir / f"pipeline_report_{time.strftime('%Y%m%d_%H%M%S')}.html"
+    html_file.write_text(
+        render_html_report(metrics_list, brand, time.strftime("%Y-%m-%d %H:%M:%S")),
+        encoding="utf-8",
+    )
+    logger.info("HTML drop report generated at: %s", html_file)
     return html_file

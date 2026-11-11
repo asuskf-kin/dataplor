@@ -1,0 +1,73 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "datamatch_paso1",
+  "name": "Datamatch paso1: base de clientes sin los encontrados",
+  "started_at": "2026-11-11T16:39:25+00:00",
+  "finished_at": "2026-11-11T16:39:25+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\20261110_data_match_process\\20261110\\final_output.csv",
+      "rows": null,
+      "bytes": 13137776,
+      "sha256": "37db2aa0906250391f12f8db38640eed34ffb6bf38b0e3d866e6e0c2f06f272d",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\drop_zone\\ko\\ar\\andina\\clients_bottler\\20261020\\Listado clientes Andina.csv",
+      "rows": null,
+      "bytes": 11177966,
+      "sha256": "ffb47859e7bccaa8117330db967e7e074ab3b872af2e89e46d9011e4bdea0678",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\data_match_process\\qa_process\\20261111\\paso1\\clients_bottler_andina_paso1.csv",
+      "rows": null,
+      "bytes": 11100357,
+      "sha256": "666eb7d3ce3645a8434b0480cf416567580f1a66010647235487caa8949fb068",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\data_match_process\\qa_process\\20261111\\paso1\\datamatch_matches_andina_paso1.csv",
+      "rows": null,
+      "bytes": 39726,
+      "sha256": "467b6b4b69a5400690abcd7cd60c8c142c3e3e892803eba0b75e5ac1e525aa54",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\data_match_process\\qa_process\\20261111\\paso1\\paso1.json",
+      "rows": null,
+      "bytes": 1456,
+      "sha256": "f88fb28f8ee5b40b9886f0864753b88382fb96d9350b780bc82a52cbff1fc885",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\data_match_process\\qa_process\\20261111\\qa_process_report_andina.xlsx",
+      "rows": null,
+      "bytes": 17867,
+      "sha256": "4a6444900e06d77fa66ba6869a09038cdaa2d096ed087ad39773c2312471ee4a",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "paso": "paso1",
+    "fecha": "2026-11-11 11:39",
+    "clientes_inicio": 61023,
+    "clientes_con_match": 92,
+    "clientes_restantes": 60931,
+    "pct_encontrado": 0.15,
+    "umbral_limpieza": 0.5,
+    "score_min": 0.54015,
+    "score_max": 0.71,
+    "cuadra": true,
+    "umbral_front": 0.54,
+    "nuevo_client_bottler": "clients_bottler_andina_paso1.csv"
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\data_match_process\\qa_process\\20261111\\paso1\\datamatch_matches_andina_paso1.csv",
+    "bytes": 39726,
+    "sha256": "467b6b4b69a5400690abcd7cd60c8c142c3e3e892803eba0b75e5ac1e525aa54"
+  }
+}

@@ -37,7 +37,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.figure import Figure
 from matplotlib.image import imread
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Rectangle
 from matplotlib.typing import RcKeyType
 from openpyxl import Workbook
 from openpyxl.formatting.rule import ColorScale, FormatObject, Rule
@@ -45,6 +45,13 @@ from openpyxl.styles import Alignment, Border, Color, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 from openpyxl.worksheet.worksheet import Worksheet
+
+from cleaning_agent.adapters.brand import (
+    BUNDLED_ASSETS_DIR,
+    LOGO_FORMAL_LIGHT,
+    PAGE_CSS,
+    KinBrand,
+)
 
 __all__ = ["ExecutiveReportResult", "generate_executive_report"]
 
@@ -99,40 +106,74 @@ MIN_CATEGORY_VOLUME = (
     100  # categories below this are too small for the "wiped out" list
 )
 
-# --- Palette (validated for colour blindness and contrast) --------------------
-C = {
-    "surface": "#fcfcfb",
-    "ink": "#0b0b0b",
-    "ink2": "#52514e",
-    "muted": "#898781",
-    "grid": "#e1e0d9",
-    "axis": "#c3c2b7",
-    "kept": "#2a78d6",  # series 1: kept
-    "dropped": "#eb6834",  # series 2: dropped
-}
-HIGHLIGHT_BG = "#f1f6fd"
-ALERT_EDGE, ALERT_BG = "#ec835a", "#fdf3ee"
 
-# Applied through rc_context instead of plt.rcParams.update so that calling the report
-# from a long-running graph never changes matplotlib's global style for other code.
-RC_PARAMS: dict[RcKeyType, Any] = {
-    "figure.facecolor": C["surface"],
-    "axes.facecolor": C["surface"],
-    "font.family": ["Segoe UI", "DejaVu Sans", "sans-serif"],
-    "font.size": 10.5,
-    "text.color": C["ink"],
-    "axes.labelcolor": C["ink2"],
-    "axes.edgecolor": C["axis"],
-    "xtick.color": C["muted"],
-    "ytick.color": C["ink2"],
-    "grid.color": C["grid"],
-    "grid.linewidth": 0.8,
-    "axes.spines.top": False,
-    "axes.spines.right": False,
-    "axes.spines.left": False,
-    "axes.spines.bottom": False,
-    "figure.dpi": 110,
-}
+# --- Brand (skill brand-guidelines-kin) -----------------------------------------
+@dataclass(frozen=True)
+class _Theme:
+    """Kin colors and fonts, resolved once from the brand tokens file (never hard-coded).
+
+    Charts sit on a dark panel, like the brand's chart example: Kin Yellow, the primary
+    series, has no contrast on a white page.
+    """
+
+    page: str  # PDF page and the corners around each chart panel
+    layout: str  # recessed fill of cards on the page
+    panel: str  # chart panel, title band, highlighted card
+    ink: str  # text on the page
+    ink2: str  # secondary text on the page
+    muted: str  # labels, axes, the URL
+    rule: str  # table rules and borders
+    on_panel: str  # text on the dark panel
+    series: tuple[str, str]  # chart series 1 and 2: Yellow, then White
+    display: str  # Space Grotesk: titles, numerals
+    body: str  # Albert Sans: body, axes, tables
+    radius: float  # card corner, inches
+
+    @classmethod
+    def from_brand(cls, brand: KinBrand) -> _Theme:
+        display, body = brand.matplotlib_fonts()
+        c = brand.color
+        return cls(
+            page=c("ka-color-bg"),
+            layout=c("ka-color-bg-layout"),
+            panel=c("ka-color-black"),
+            ink=c("ka-color-text-primary"),
+            ink2=c("ka-color-gray-4"),
+            muted=c("ka-color-text-secondary"),
+            rule=c("ka-color-border"),
+            on_panel=c("ka-color-white"),
+            series=(c("ka-chart-1"), c("ka-chart-2")),
+            display=display,
+            body=body,
+            radius=brand.length_in("ka-radius-box"),
+        )
+
+
+def _rc_params(theme: _Theme) -> dict[RcKeyType, Any]:
+    """Applied through rc_context instead of plt.rcParams.update so that calling the
+    report from a long-running graph never changes matplotlib's global style."""
+    return {
+        "figure.facecolor": theme.page,
+        "axes.facecolor": theme.panel,
+        "font.family": [theme.body],
+        "font.size": 10.5,
+        "text.color": theme.on_panel,
+        "axes.labelcolor": theme.muted,
+        "axes.edgecolor": theme.ink2,
+        "xtick.color": theme.muted,
+        "ytick.color": theme.muted,
+        "grid.color": theme.ink2,
+        "grid.linewidth": 0.8,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.spines.left": False,
+        "axes.spines.bottom": False,
+        "figure.dpi": 110,
+        # TrueType embedding keeps the PDF text real Space Grotesk / Albert Sans
+        # (selectable, searchable) instead of Type 3 outlines.
+        "pdf.fonttype": 42,
+    }
+
 
 # --- PDF layout (inches) ------------------------------------------------------
 A4 = (8.27, 11.69)
@@ -140,6 +181,8 @@ MARGIN = 0.62
 USABLE_WIDTH = A4[0] - 2 * MARGIN
 ROW_HEIGHT = 0.20
 MAX_IMAGE_HEIGHT = 6.4
+FOOTER_Y = 0.32  # baseline of the logo + kinanalytics.com footer, below the margin
+CHART_PAD = 1.8  # chart padding inside its dark panel, in font-size units
 
 
 # =============================================================================
@@ -168,6 +211,8 @@ def generate_executive_report(
     apply_manual_deletions: bool = True,
     overwrite_channel_csv: bool = False,
     correlation_id: str | None = None,
+    brand: KinBrand | None = None,
+    xlsx_dir: Path | None = None,
 ) -> ExecutiveReportResult:
     """Builds the executive report of one cleaning run and writes it into ``out_dir``.
 
@@ -175,7 +220,7 @@ def generate_executive_report(
         raw_csv: pipeline input (the initial universe).
         output_csv: final pipeline output (all channels).
         dropped_dir: folder with the ``NN_*.csv`` drop files. Missing folder = no drops.
-        out_dir: the only place this function writes to (created if missing).
+        out_dir: where the HTML, PDF and channel CSV go (created if missing).
         country: country code; lower case in file names, upper case in the report.
         bottler: bottler name for the ``{bottler}`` placeholder ("" = none).
         channel: deliverable channel (``channel_cat`` value); ``None`` = whole dataset.
@@ -187,6 +232,9 @@ def generate_executive_report(
         overwrite_channel_csv: the channel CSV is never overwritten by default because
             people edit it by hand after it is exported.
         correlation_id: run identifier added to every log line (new UUID4 if None).
+        brand: Kin brand assets (fonts, tokens, logo) for the HTML, PDF, charts and
+            Excel. ``None`` = the skill bundled in this repository.
+        xlsx_dir: where the Excel goes (the DWH gold layer); ``None`` = ``out_dir``.
 
     Raises:
         FileNotFoundError: if ``raw_csv`` or ``output_csv`` does not exist.
@@ -230,21 +278,45 @@ def generate_executive_report(
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    brand = brand or KinBrand(BUNDLED_ASSETS_DIR)
+    theme = _Theme.from_brand(brand)
+    logo_png = brand.logo_png(LOGO_FORMAL_LIGHT)
+    if logo_png is None:
+        log.warning(
+            "Logo omitido del PDF: falta el rasterizador 'cairosvg' para %s "
+            "(la marca prohíbe redibujarlo).",
+            LOGO_FORMAL_LIGHT,
+        )
     files: list[Path] = []
-    with matplotlib.rc_context(RC_PARAMS):
-        content = _build_content(data)
+    with matplotlib.rc_context(_rc_params(theme)):
+        content = _build_content(data, theme)
         channel_file = _export_channel_csv(
             output_csv, out_dir, data, overwrite_channel_csv, log
         )
         if channel_file is not None:
             files.append(channel_file)
-        xlsx = _export_categories_xlsx(out_dir / f"{base_name}.xlsx", data, meta, log)
+        excel_dir = xlsx_dir or out_dir
+        excel_dir.mkdir(parents=True, exist_ok=True)
+        xlsx = _export_categories_xlsx(
+            excel_dir / f"{base_name}.xlsx", data, meta, log, theme
+        )
         if xlsx is not None:
             files.append(xlsx)
         # Warnings travel with the report (HTML/PDF) so readers see the caveats.
         content.warnings = list(warnings)
-        files.append(_export_html(out_dir / f"{base_name}.html", data, content, meta))
-        files.append(_export_pdf(out_dir / f"{base_name}.pdf", data, content, meta))
+        files.append(
+            _export_html(out_dir / f"{base_name}.html", data, content, meta, brand)
+        )
+        files.append(
+            _export_pdf(
+                out_dir / f"{base_name}.pdf",
+                data,
+                content,
+                meta,
+                theme,
+                logo_png,
+            )
+        )
 
     for warning in warnings:
         log.warning(warning)
@@ -644,6 +716,7 @@ class _Content:
 
     cards: list[_Card]
     hero_detail: str
+    theme: _Theme
     figs: dict[str, bytes] = field(default_factory=dict)
     tables: dict[str, pd.DataFrame] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
@@ -657,13 +730,33 @@ class _Content:
         self.tables[key] = view.reset_index(drop=True)
 
     def add_figure(self, fig: Figure, key: str) -> None:
+        """Saves the chart on a rounded dark panel (the brand's chart card).
+
+        The panel is drawn in inches, so its corner matches the card radius token at
+        any figure size; outside it, the page colour shows.
+        """
+        width, height = fig.get_size_inches()
+        fig.add_artist(
+            FancyBboxPatch(
+                (0, 0),
+                width,
+                height,
+                boxstyle=f"round,pad=0,rounding_size={self.theme.radius}",
+                transform=fig.dpi_scale_trans,
+                facecolor=self.theme.panel,
+                edgecolor="none",
+                zorder=-1,
+            )
+        )
         buf = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight", facecolor=C["surface"])
+        fig.savefig(buf, format="png", facecolor=self.theme.page)
         self.figs[key] = buf.getvalue()
 
 
-def _build_content(data: _RunData) -> _Content:
-    content = _Content(cards=_build_cards(data), hero_detail=_hero_detail(data))
+def _build_content(data: _RunData, theme: _Theme) -> _Content:
+    content = _Content(
+        cards=_build_cards(data), hero_detail=_hero_detail(data), theme=theme
+    )
     _section_funnel(data, content)
     reasons = _section_reasons(data, content)
     _section_manual(data, content)
@@ -766,10 +859,16 @@ def _new_figure(width: float, height: float) -> tuple[Figure, Axes]:
     return fig, fig.subplots()
 
 
-def _title(ax: Axes, title: str, subtitle: str | None) -> None:
+def _title(ax: Axes, theme: _Theme, title: str, subtitle: str | None) -> None:
     """Title + subtitle spaced in points, so the gap is constant whatever the height."""
     ax.set_title(
-        title, loc="left", fontsize=13, color=C["ink"], pad=24 if subtitle else 8
+        title,
+        loc="left",
+        fontsize=13,
+        color=theme.on_panel,
+        fontfamily=theme.display,
+        fontweight="medium",
+        pad=24 if subtitle else 8,
     )
     if subtitle:
         ax.annotate(
@@ -780,14 +879,14 @@ def _title(ax: Axes, title: str, subtitle: str | None) -> None:
             textcoords="offset points",
             va="bottom",
             fontsize=9.5,
-            color=C["muted"],
+            color=theme.muted,
         )
 
 
-def _style_legend(ax: Axes, **kwargs: Any) -> None:
+def _style_legend(ax: Axes, theme: _Theme, **kwargs: Any) -> None:
     legend = ax.legend(frameon=False, fontsize=9.5, ncols=2, **kwargs)
     for text in legend.get_texts():
-        text.set_color(C["ink2"])
+        text.set_color(theme.on_panel)
 
 
 def _hbar(
@@ -797,15 +896,15 @@ def _hbar(
     title: str,
     key: str,
     subtitle: str | None = None,
-    color: str | None = None,
 ) -> None:
-    """Sorted horizontal bars, one hue, value at the end of each bar."""
+    """Sorted horizontal bars, one series (Kin Yellow), value at the end of each bar."""
     n = len(labels)
     if n == 0:  # an empty chart says nothing; the table already shows there is no data
         return
     short = [lbl if len(str(lbl)) <= 36 else f"{str(lbl)[:35]}…" for lbl in labels]
     fig, ax = _new_figure(9.2, max(2.0, 0.44 * n + 1.3))
-    ax.barh(range(n), values, height=0.62, color=color or C["kept"], zorder=3)
+    theme = content.theme
+    ax.barh(range(n), values, height=0.62, color=theme.series[0], zorder=3)
     ax.set_yticks(range(n), short)
     ax.invert_yaxis()
     top = max(values) if max(values) > 0 else 1
@@ -818,13 +917,13 @@ def _hbar(
             textcoords="offset points",
             va="center",
             fontsize=9.5,
-            color=C["ink2"],
+            color=theme.on_panel,
         )
     ax.set_xticks([])  # the value is printed on the bar: an axis would be redundant
     ax.grid(False)
     ax.tick_params(length=0)
-    _title(ax, title, subtitle)
-    fig.tight_layout()
+    _title(ax, theme, title, subtitle)
+    fig.tight_layout(pad=CHART_PAD)
     content.add_figure(fig, key)
 
 
@@ -874,13 +973,14 @@ def _funnel_chart(funnel: pd.DataFrame, data: _RunData, content: _Content) -> No
     """
     entered = funnel["restantes"] + funnel["eliminados"]
     n = len(funnel)
+    theme = content.theme
     fig, ax = _new_figure(9.6, max(2.2, 0.5 * n + 1.5))
     gap = float(entered.max()) * 0.004  # surface gap between the two segments
     ax.barh(
         range(n),
         funnel["restantes"],
         height=0.6,
-        color=C["kept"],
+        color=theme.series[0],
         label="Siguen en el pipeline",
         zorder=3,
     )
@@ -889,7 +989,7 @@ def _funnel_chart(funnel: pd.DataFrame, data: _RunData, content: _Content) -> No
         funnel["eliminados"],
         left=funnel["restantes"] + gap,
         height=0.6,
-        color=C["dropped"],
+        color=theme.series[1],
         label="Eliminados en el paso",
         zorder=3,
     )
@@ -909,17 +1009,18 @@ def _funnel_chart(funnel: pd.DataFrame, data: _RunData, content: _Content) -> No
             textcoords="offset points",
             va="center",
             fontsize=9.5,
-            color=C["ink2"],
+            color=theme.on_panel,
         )
     _title(
         ax,
+        theme,
         "Cada paso: lo que entró, lo que se eliminó y lo que quedó",
         f"Arranca en {_thousands(data.n_initial)} registros y termina en "
         f"{_thousands(data.n_final)}",
     )
     # Legend above the bars: below, it collides with the last sum.
-    _style_legend(ax, loc="lower right", bbox_to_anchor=(1, 1.0))
-    fig.tight_layout()
+    _style_legend(ax, theme, loc="lower right", bbox_to_anchor=(1, 1.0))
+    fig.tight_layout(pad=CHART_PAD)
     content.add_figure(fig, "embudo")
 
 
@@ -944,7 +1045,6 @@ def _section_reasons(data: _RunData, content: _Content) -> pd.DataFrame:
         "Motivos de eliminación",
         key="motivos",
         subtitle="Cada registro se atribuye a una sola regla: la primera que coincide",
-        color=C["dropped"],
     )
     return reasons
 
@@ -988,7 +1088,6 @@ def _section_manual(data: _RunData, content: _Content) -> None:
             f"Top {len(top)} de {_thousands(len(by_brand))} marcas · "
             f"{_thousands(len(detail))} registros borrados en total"
         ),
-        color=C["dropped"],
     )
 
 
@@ -1036,7 +1135,6 @@ def _section_triggers(data: _RunData, reasons: pd.DataFrame, content: _Content) 
                 f"{step} · agrupado por {col} · el top explica {_pct(coverage, 0)} "
                 f"de las {_thousands(len(sub))} bajas del motivo"
             ),
-            color=C["dropped"],
         )
 
 
@@ -1069,6 +1167,7 @@ def _section_categories(data: _RunData, content: _Content) -> None:
 def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> None:
     """Part-to-whole per category: stacked horizontal bar, two series."""
     n = len(top)
+    theme = content.theme
     fig, ax = _new_figure(9.6, 0.46 * n + 1.8)
     peak = float(top["inicial"].max())
     gap = peak * 0.006  # surface gap between segments
@@ -1076,7 +1175,7 @@ def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> N
         range(n),
         top["conservados"],
         height=0.62,
-        color=C["kept"],
+        color=theme.series[0],
         label="Conservados",
         zorder=3,
     )
@@ -1085,7 +1184,7 @@ def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> N
         top["eliminados"],
         left=top["conservados"] + gap,
         height=0.62,
-        color=C["dropped"],
+        color=theme.series[1],
         label="Eliminados",
         zorder=3,
     )
@@ -1102,7 +1201,7 @@ def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> N
             textcoords="offset points",
             va="center",
             fontsize=9.5,
-            color=C["ink2"],
+            color=theme.on_panel,
         )
     ax.grid(axis="x", zorder=0)
     ax.set_axisbelow(True)
@@ -1116,11 +1215,12 @@ def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> N
         scope = "el dataset final"
     _title(
         ax,
+        theme,
         "Top 15 categorías: conservados vs eliminados",
         "El % al final de cada barra es la retención hasta " + scope,
     )
-    _style_legend(ax, loc="lower right")
-    fig.tight_layout()
+    _style_legend(ax, theme, loc="lower right")
+    fig.tight_layout(pad=CHART_PAD)
     content.add_figure(fig, "categorias")
 
 
@@ -1244,25 +1344,41 @@ def _export_channel_csv(
 # --- Excel -------------------------------------------------------------------------
 @dataclass(frozen=True)
 class _XlsxStyle:
-    header: Font = field(
-        default_factory=lambda: Font(name="Arial", size=10, bold=True, color="FFFFFF")
-    )
-    normal: Font = field(default_factory=lambda: Font(name="Arial", size=10))
-    strong: Font = field(default_factory=lambda: Font(name="Arial", size=10, bold=True))
-    fill: PatternFill = field(
-        default_factory=lambda: PatternFill(
-            "solid", fgColor=C["kept"].lstrip("#").upper()
-        )
-    )
-    top_border: Border = field(
-        default_factory=lambda: Border(top=Side(style="thin", color="C3C2B7"))
-    )
-    bottom_border: Border = field(
-        default_factory=lambda: Border(bottom=Side(style="thin", color="C3C2B7"))
+    header: Font
+    normal: Font
+    strong: Font
+    fill: PatternFill
+    top_border: Border
+    bottom_border: Border
+    # 2-colour scales (low, high) on the Keep/Discard counts: Yellow marks what stays,
+    # Gray 3 what goes, so the sheet speaks the same palette as the report.
+    keep_scale: tuple[str, str]
+    discard_scale: tuple[str, str]
+
+
+def _xlsx_style(theme: _Theme) -> _XlsxStyle:
+    """Excel styles from the brand tokens (openpyxl wants RRGGBB without '#')."""
+
+    def rgb(hex_color: str) -> str:
+        return hex_color.lstrip("#").upper()
+
+    # Albert Sans only renders where it is installed; Excel substitutes elsewhere.
+    def font(**kwargs: Any) -> Font:
+        return Font(name=theme.body, size=10, **kwargs)
+
+    rule = Side(style="thin", color=rgb(theme.rule))
+    return _XlsxStyle(
+        header=font(bold=True, color=rgb(theme.on_panel)),
+        normal=font(),
+        strong=font(bold=True),
+        fill=PatternFill("solid", fgColor=rgb(theme.ink2)),
+        top_border=Border(top=rule),
+        bottom_border=Border(bottom=rule),
+        keep_scale=(rgb(theme.page), rgb(theme.series[0])),
+        discard_scale=(rgb(theme.page), rgb(theme.muted)),
     )
 
 
-GREEN, YELLOW, RED = "63BE7B", "FFEB84", "F8696B"
 LIST_WIDTH = 3  # columns of a Keep/Discard list: category, channel, count
 
 
@@ -1399,8 +1515,10 @@ def _write_summary_sheet(
     )
     start = len(rows) + 2
     total_row = start + 2 + max(len(discard), len(keep))
-    _write_list_block(ws, "Discard", discard, 1, start, total_row, (RED, GREEN), style)
-    _write_list_block(ws, "Keep", keep, 5, start, total_row, (GREEN, RED), style)
+    _write_list_block(
+        ws, "Discard", discard, 1, start, total_row, style.discard_scale, style
+    )
+    _write_list_block(ws, "Keep", keep, 5, start, total_row, style.keep_scale, style)
 
     ws.page_setup.orientation = "landscape"
     ws.page_setup.fitToWidth = 1
@@ -1419,7 +1537,7 @@ def _write_list_block(
     style: _XlsxStyle,
 ) -> None:
     """A Keep/Discard list with its TOTAL and a colour scale per channel run."""
-    high, low = colors
+    low, high = colors
     count_col = col + LIST_WIDTH - 1
     letter = get_column_letter(count_col)
 
@@ -1467,16 +1585,12 @@ def _write_list_block(
 
 
 def _color_scale(low: str, high: str) -> Rule:
-    """3-colour scale min/median/max (what openpyxl's untyped ColorScaleRule builds)."""
+    """2-colour scale min/max (what openpyxl's untyped ColorScaleRule builds)."""
     return Rule(
         type="colorScale",
         colorScale=ColorScale(
-            cfvo=[
-                FormatObject("min"),
-                FormatObject("percentile", 50),
-                FormatObject("max"),
-            ],
-            color=[Color(low), Color(YELLOW), Color(high)],
+            cfvo=[FormatObject("min"), FormatObject("max")],
+            color=[Color(low), Color(high)],
         ),
     )
 
@@ -1595,14 +1709,18 @@ def _write_manual_sheet(ws: Worksheet, data: _RunData, style: _XlsxStyle) -> Non
 
 
 def _export_categories_xlsx(
-    target: Path, data: _RunData, meta: _RunMeta, log: _CorrelationAdapter
+    target: Path,
+    data: _RunData,
+    meta: _RunMeta,
+    log: _CorrelationAdapter,
+    theme: _Theme,
 ) -> Path | None:
     """Excel with which categories were kept and dropped, with counts and per-reason detail."""
     if "business_category" not in data.raw.columns:
         log.info("La entrada no tiene 'business_category': no se escribe el Excel.")
         return None
     cat, pivot = _category_table(data), _category_reason_table(data)
-    style = _XlsxStyle()
+    style = _xlsx_style(theme)
     wb = Workbook()
     summary_ws = wb.active
     assert isinstance(summary_ws, Worksheet)  # a fresh Workbook always has one sheet
@@ -1626,40 +1744,27 @@ def _export_categories_xlsx(
 
 
 # --- HTML --------------------------------------------------------------------------
-def _html_css() -> str:
-    return f"""
-  body {{ font-family:system-ui,'Segoe UI',sans-serif; background:#f9f9f7; color:{C["ink"]};
-         margin:0; padding:32px; }}
-  main {{ max-width:1040px; margin:auto; background:{C["surface"]};
-          border:1px solid rgba(11,11,11,.10); border-radius:14px; padding:32px 36px; }}
-  h1 {{ font-size:24px; margin:0 0 4px; }}
-  h2 {{ font-size:16px; margin:34px 0 12px; padding-bottom:8px;
-        border-bottom:1px solid {C["grid"]}; color:{C["ink"]}; }}
-  .meta {{ color:{C["muted"]}; font-size:13px; margin-bottom:24px; }}
-  .hero {{ font-size:52px; color:{C["kept"]}; line-height:1; }}
-  .hero small {{ display:block; font-size:14px; color:{C["ink2"]}; margin-top:6px; }}
-  .cards {{ display:flex; gap:12px; flex-wrap:wrap; margin:20px 0 8px; }}
-  .card {{ flex:1 1 165px; border:1px solid rgba(11,11,11,.10); border-radius:10px;
-           padding:14px 16px; }}
-  .card .k {{ display:block; font-size:11px; text-transform:uppercase; letter-spacing:.04em;
-              color:{C["muted"]}; }}
-  .card .k i {{ font-style:normal; color:{C["muted"]}; margin-right:4px; }}
-  .card .v {{ display:block; font-size:27px; margin:5px 0 2px; }}
-  .card .s {{ display:block; font-size:12.5px; color:{C["ink2"]}; }}
-  /* The deliverable is highlighted: it is the number people look for at a glance */
-  .card.destacada {{ border:2px solid {C["kept"]}; background:{HIGHLIGHT_BG}; }}
-  .card.destacada .k {{ color:{C["kept"]}; font-weight:700; }}
-  .card.destacada .v {{ color:{C["kept"]}; font-weight:700; font-size:31px; }}
-  .card.destacada .s {{ font-weight:600; }}
-  .alert {{ border:1px solid {ALERT_EDGE}; background:{ALERT_BG}; color:{C["ink"]};
-            font-size:13px; border-radius:8px; padding:10px 14px; margin:14px 0 0; }}
-  img {{ max-width:100%; display:block; margin:14px 0 18px; }}
-  table {{ border-collapse:collapse; width:100%; font-size:13px; margin:10px 0 22px;
-           font-variant-numeric:tabular-nums; }}
-  th {{ text-align:left; color:{C["ink2"]}; font-weight:600; border-bottom:1px solid {C["axis"]}; }}
-  td {{ border-bottom:1px solid {C["grid"]}; color:{C["ink"]}; }}
-  th, td {{ padding:7px 10px; }}
-  tr:hover td {{ background:#f4f4f1; }}
+# Report-specific rules on top of the shared brand page (brand.PAGE_CSS); tokens and
+# rem only. Kin Yellow never colours text on the light page: it is the accent bar of
+# the hero and the value of the highlighted card, which sits on black.
+REPORT_CSS = """
+.band .sub code{color:var(--ka-color-gray-2)}
+.hero{display:flex;align-items:baseline;flex-wrap:wrap;gap:.5rem 1.25rem;margin:0 0 1.75rem;
+padding-left:1rem;border-left:.375rem solid var(--ka-color-yellow)}
+.hero .num{font-family:var(--ka-font-display);font-weight:var(--ka-weight-bold);font-size:var(--ka-size-display);
+line-height:var(--ka-lh-tight)}
+.hero .det{color:var(--ka-color-gray-4)}
+.stat .op{color:var(--ka-color-text-secondary);margin-right:.25rem}
+.stat .detail{color:var(--ka-color-gray-4);font-size:var(--ka-size-caption)}
+.stat.hl{background:var(--ka-color-black);color:var(--ka-color-white)}
+.stat.hl .value{color:var(--ka-color-yellow)}
+.stat.hl .detail{color:var(--ka-color-gray-2)}
+.alert{background:var(--ka-color-surface);border-radius:var(--ka-radius-box);padding:.75rem 1.25rem;
+margin-bottom:1rem;font-size:var(--ka-size-caption);border-left:.25rem solid var(--ka-color-yellow)}
+.alert strong{font-weight:var(--ka-weight-semibold);margin-right:.5rem}
+.card img{max-width:100%;height:auto;display:block;margin:0 0 1.25rem}
+.card table{font-size:var(--ka-size-caption);margin-bottom:1.5rem;font-variant-numeric:tabular-nums}
+.card table:last-child{margin-bottom:0}
 """
 
 
@@ -1678,38 +1783,48 @@ def _html_body(content: _Content) -> str:
             elif kind == "table" and key in content.tables:
                 pieces += content.tables[key].to_html(index=False, border=0)
         if pieces:
-            body += f"<section><h2>{html.escape(title)}</h2>{pieces}</section>"
+            body += (
+                f'<section class="card"><h2>{html.escape(title)}</h2>{pieces}</section>'
+            )
     return body
 
 
 def _export_html(
-    target: Path, data: _RunData, content: _Content, meta: _RunMeta
+    target: Path, data: _RunData, content: _Content, meta: _RunMeta, brand: KinBrand
 ) -> Path:
-    """Self-contained HTML (charts embedded), to share by chat or mail."""
+    """Self-contained, on-brand HTML (fonts, tokens, logo and charts embedded)."""
     cards = "".join(
-        f'<div class="card{" destacada" if c.highlighted else ""}">'
-        f'<span class="k"><i>{c.op}</i>{html.escape(c.title)}</span>'
-        f'<span class="v">{html.escape(c.value)}</span>'
-        f'<span class="s">{html.escape(c.detail)}</span></div>'
+        f'<div class="stat{" hl" if c.highlighted else ""}">'
+        f'<div class="label"><span class="op">{c.op}</span>{html.escape(c.title)}</div>'
+        f'<div class="value">{html.escape(c.value)}</div>'
+        f'<div class="detail">{html.escape(c.detail)}</div></div>'
         for c in content.cards
     )
     alerts = "".join(
-        f'<div class="alert">⚠️ {html.escape(a)}</div>' for a in content.warnings
+        f'<div class="alert"><strong>Aviso</strong>{html.escape(a)}</div>'
+        for a in content.warnings
     )
     bottler = f" · embotellador {html.escape(meta.bottler)}" if meta.bottler else ""
+    logo = brand.logo(LOGO_FORMAL_LIGHT)
     target.write_text(
-        f"""<!DOCTYPE html>
+        f"""<!doctype html>
 <html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reporte ejecutivo — limpieza Dataplor {html.escape(meta.country)}</title>
-<style>{_html_css()}</style></head><body><main>
-  <h1>Reporte ejecutivo — limpieza Dataplor</h1>
-  <div class="meta">País {html.escape(meta.country)}{bottler} · generado {meta.generated_at} ·
-     entrada <code>{html.escape(meta.raw_name)}</code> · salida <code>{html.escape(meta.output_name)}</code></div>
-  <div class="hero">{html.escape(_pct(data.retention))}<small>{html.escape(content.hero_detail)}</small></div>
-  <div class="cards">{cards}</div>
-  {alerts}
-  {_html_body(content)}
-</main></body></html>""",
+<style>{brand.head_css}{PAGE_CSS}{REPORT_CSS}</style></head><body><div class="page">
+<div class="top">{logo}<span class="ka-site">kinanalytics.com</span></div>
+<section class="band">
+<p class="eyebrow">Reporte ejecutivo · País {html.escape(meta.country)}{bottler}</p>
+<h1>Reporte ejecutivo — limpieza Dataplor</h1>
+<p class="sub">Generado {meta.generated_at} · entrada <code>{html.escape(meta.raw_name)}</code>
+· salida <code>{html.escape(meta.output_name)}</code></p>
+</section>
+<div class="hero"><span class="num">{html.escape(_pct(data.retention))}</span><span class="det">{html.escape(content.hero_detail)}</span></div>
+<div class="stats">{cards}</div>
+{alerts}
+{_html_body(content)}
+<div class="foot">{logo}<span class="ka-site">kinanalytics.com</span></div>
+</div></body></html>""",
         encoding="utf-8",
     )
     return target
@@ -1717,10 +1832,16 @@ def _export_html(
 
 # --- PDF ---------------------------------------------------------------------------
 class _PdfReport:
-    """Composes A4 pages stacking charts and tables, with automatic page breaks."""
+    """Composes on-brand A4 pages stacking charts and tables, with automatic page breaks.
 
-    def __init__(self, pdf: PdfPages) -> None:
+    Every page carries the brand footer: the approved logo file bottom-left (when it
+    could be rasterised) and ``kinanalytics.com`` bottom-right.
+    """
+
+    def __init__(self, pdf: PdfPages, theme: _Theme, logo_png: bytes | None) -> None:
         self.pdf = pdf
+        self.theme = theme
+        self.logo = imread(io.BytesIO(logo_png)) if logo_png else None
         self._fig: Figure | None = None
         self._ax: Axes | None = None
         self.y = 0.0
@@ -1749,6 +1870,35 @@ class _PdfReport:
         ax.set_ylim(0, A4[1])
         self._fig, self._ax = fig, ax
         self.y = A4[1] - MARGIN
+        self._footer()
+
+    def _footer(self) -> None:
+        theme = self.theme
+        self.ax.text(
+            A4[0] - MARGIN,
+            FOOTER_Y,
+            "kinanalytics.com",
+            fontsize=8,
+            fontfamily=theme.body,
+            fontweight="medium",
+            color=theme.muted,
+            ha="right",
+            va="center",
+        )
+        if self.logo is None:
+            return
+        height = 0.20
+        width = height * self.logo.shape[1] / self.logo.shape[0]
+        axes = self.fig.add_axes(
+            (
+                MARGIN / A4[0],
+                (FOOTER_Y - height / 2) / A4[1],
+                width / A4[0],
+                height / A4[1],
+            )
+        )
+        axes.imshow(self.logo)
+        axes.set_axis_off()
 
     def space(self, height: float) -> float:
         """Reserves ``height`` inches, opening a new page if they do not fit."""
@@ -1757,13 +1907,25 @@ class _PdfReport:
         self.y -= height
         return self.y
 
-    def text(self, s: str, size: float = 10, color: str | None = None) -> None:
+    def text(
+        self,
+        s: str,
+        size: float = 10,
+        color: str | None = None,
+        *,
+        x: float = MARGIN,
+        display: bool = False,
+        weight: str = "normal",
+    ) -> None:
+        theme = self.theme
         self.ax.text(
-            MARGIN,
+            x,
             self.y,
             s,
             fontsize=size,
-            color=color or C["ink"],
+            color=color or theme.ink,
+            fontfamily=theme.display if display else theme.body,
+            fontweight=weight,
             va="baseline",
             ha="left",
         )
@@ -1773,12 +1935,32 @@ class _PdfReport:
             [MARGIN, MARGIN + USABLE_WIDTH], [self.y + dy] * 2, color=color, lw=lw
         )
 
+    def _box(self, x: float, y: float, w: float, h: float, color: str) -> None:
+        """Rounded card at the brand radius, flat (the brand has no shadows)."""
+        self.ax.add_patch(
+            FancyBboxPatch(
+                (x, y),
+                w,
+                h,
+                boxstyle=f"round,pad=0,rounding_size={self.theme.radius}",
+                linewidth=0,
+                facecolor=color,
+            )
+        )
+
+    def _accent(self, x: float, y: float, h: float) -> None:
+        """Yellow accent bar: the brand colour enters as a shape, never as text."""
+        self.ax.add_patch(
+            Rectangle((x, y), 0.06, h, linewidth=0, facecolor=self.theme.series[0])
+        )
+
     def section_title(self, s: str) -> None:
         self._new_page()  # every section starts on its own page
-        self.space(0.28)
-        self.text(s, size=15)
-        self.space(0.10)
-        self.rule(C["axis"], 0.8)
+        self.space(0.30)
+        self._accent(MARGIN, self.y - 0.04, 0.26)
+        self.text(s, size=15, x=MARGIN + 0.18, display=True, weight="medium")
+        self.space(0.14)
+        self.rule(self.theme.rule, 0.8)
         self.space(0.22)
 
     def image(self, png: bytes) -> None:
@@ -1796,6 +1978,7 @@ class _PdfReport:
 
     def table(self, df: pd.DataFrame) -> None:
         """Draws a table, repeating the header when it continues on the next page."""
+        theme = self.theme
         cols = [str(c) for c in df.columns]
         # Width proportional to content but capped: a UUID column cannot eat the others'
         # width (the full value stays in the HTML and the Excel).
@@ -1816,13 +1999,14 @@ class _PdfReport:
                     self.y,
                     c,
                     fontsize=8.5,
-                    color=C["ink2"],
-                    weight="bold",
+                    color=theme.ink,
+                    fontfamily=theme.body,
+                    fontweight="semibold",
                     ha="right" if r else "left",
                     va="baseline",
                 )
             self.space(0.08)
-            self.rule(C["axis"], 0.7)
+            self.rule(theme.ink, 0.7)
 
         header()
         for values in df.itertuples(index=False):
@@ -1840,56 +2024,92 @@ class _PdfReport:
                     self.y,
                     s,
                     fontsize=8.5,
-                    color=C["ink"],
+                    color=theme.ink,
+                    # Numerals are Space Grotesk in the brand; text stays Albert Sans
+                    fontfamily=theme.display if r else theme.body,
                     ha="right" if r else "left",
                     va="baseline",
                 )
-            self.rule(C["grid"], 0.5, dy=-0.06)
+            self.rule(theme.rule, 0.5, dy=-0.06)
         self.space(0.20)
 
     def cover(self, data: _RunData, content: _Content, meta: _RunMeta) -> None:
-        """Title, retention, KPI cards and warnings."""
+        """Black title band, retention, KPI cards and warnings."""
+        theme = self.theme
         self._new_page()
-        self.space(0.42)
-        self.text("Reporte ejecutivo — limpieza Dataplor", size=19)
-        self.space(0.30)
-        self.text(
-            f"País {meta.country}{' · embotellador ' + meta.bottler if meta.bottler else ''} · "
-            f"generado {meta.generated_at} · entrada {meta.raw_name} · salida {meta.output_name}",
-            size=8.5,
-            color=C["muted"],
+        band_h, pad = 1.60, 0.30
+        base = self.space(band_h)
+        self._box(MARGIN, base, USABLE_WIDTH, band_h, theme.panel)
+        bottler = f" · EMBOTELLADOR {meta.bottler.upper()}" if meta.bottler else ""
+        lines = (
+            (
+                band_h - 0.40,
+                f"REPORTE EJECUTIVO · PAÍS {meta.country}{bottler}",
+                7.5,
+                theme.series[0],
+                True,
+                "semibold",
+            ),
+            (
+                band_h - 0.84,
+                "Reporte ejecutivo — limpieza Dataplor",
+                19,
+                theme.on_panel,
+                True,
+                "bold",
+            ),
+            (0.48, f"Generado {meta.generated_at}", 8, theme.muted, False, "normal"),
+            (
+                0.28,
+                f"Entrada {meta.raw_name} · salida {meta.output_name}",
+                8,
+                theme.muted,
+                False,
+                "normal",
+            ),
         )
-        self.space(0.95)
-        self.text(_pct(data.retention), size=46, color=C["kept"])
-        self.space(0.30)
-        self.text(content.hero_detail, size=11, color=C["ink2"])
+        for dy, s, size, color, display, weight in lines:
+            self.ax.text(
+                MARGIN + pad,
+                base + dy,
+                s,
+                fontsize=size,
+                color=color,
+                fontfamily=theme.display if display else theme.body,
+                fontweight=weight,
+                va="baseline",
+            )
+        self.space(1.05)
+        self._accent(MARGIN, self.y - 0.08, 0.64)
+        self.text(
+            _pct(data.retention), size=46, x=MARGIN + 0.22, display=True, weight="bold"
+        )
+        self.space(0.32)
+        self.text(content.hero_detail, size=11, color=theme.ink2, x=MARGIN + 0.22)
         self.space(0.30)
         self._cards(content.cards)
         for warning in content.warnings:
             base = self.space(0.56) + 0.12
-            self.ax.add_patch(
-                FancyBboxPatch(
-                    (MARGIN, base),
-                    USABLE_WIDTH,
-                    0.40,
-                    boxstyle="round,pad=0,rounding_size=0.05",
-                    linewidth=0.8,
-                    edgecolor=ALERT_EDGE,
-                    facecolor=ALERT_BG,
-                )
-            )
-            short = warning if len(warning) <= 130 else warning[:129] + "…"
+            self._box(MARGIN, base, USABLE_WIDTH, 0.40, theme.layout)
+            self._accent(MARGIN + 0.14, base + 0.10, 0.20)
+            short = warning if len(warning) <= 125 else warning[:124] + "…"
             self.ax.text(
-                MARGIN + 0.14,
+                MARGIN + 0.32,
                 base + 0.15,
-                f"⚠ {short}",
+                f"Aviso · {short}",
                 fontsize=7.5,
-                color=C["ink"],
+                color=theme.ink,
+                fontfamily=theme.body,
                 va="baseline",
             )
 
     def _cards(self, cards: Sequence[_Card]) -> None:
-        """KPI cards in rows of 3; each row is reserved whole before drawing."""
+        """KPI cards in rows of 3; each row is reserved whole before drawing.
+
+        The highlighted card (the deliverable) is black with its value in Kin Yellow,
+        the only place yellow text is allowed: on a dark surface.
+        """
+        theme = self.theme
         sep, card_h = 0.14, 0.92
         card_w = (USABLE_WIDTH - 2 * sep) / 3
         for i in range(0, len(cards), 3):
@@ -1897,62 +2117,66 @@ class _PdfReport:
             for j, card in enumerate(cards[i : i + 3]):
                 x = MARGIN + j * (card_w + sep)
                 hl = card.highlighted
-                self.ax.add_patch(
-                    FancyBboxPatch(
-                        (x, base),
-                        card_w,
-                        card_h,
-                        boxstyle="round,pad=0,rounding_size=0.06",
-                        linewidth=1.8 if hl else 0.8,
-                        edgecolor=C["kept"] if hl else C["grid"],
-                        facecolor=HIGHLIGHT_BG if hl else C["surface"],
+                self._box(x, base, card_w, card_h, theme.panel if hl else theme.layout)
+                for dy, s, size, color, display, weight in (
+                    (
+                        card_h - 0.26,
+                        f"{card.op} {card.title}".strip().upper(),
+                        6.8,
+                        theme.muted,
+                        False,
+                        "semibold",
+                    ),
+                    (
+                        card_h - 0.60,
+                        card.value,
+                        17,
+                        theme.series[0] if hl else theme.ink,
+                        True,
+                        "bold",
+                    ),
+                    (
+                        0.16,
+                        card.detail,
+                        7.2,
+                        theme.on_panel if hl else theme.ink2,
+                        False,
+                        "normal",
+                    ),
+                ):
+                    self.ax.text(
+                        x + 0.16,
+                        base + dy,
+                        s,
+                        fontsize=size,
+                        color=color,
+                        fontfamily=theme.display if display else theme.body,
+                        fontweight=weight,
+                        va="baseline",
                     )
-                )
-                weight = "bold" if hl else "normal"
-                self.ax.text(
-                    x + 0.14,
-                    base + card_h - 0.26,
-                    f"{card.op} {card.title}".strip().upper(),
-                    fontsize=6.8,
-                    weight=weight,
-                    color=C["kept"] if hl else C["muted"],
-                    va="baseline",
-                )
-                self.ax.text(
-                    x + 0.14,
-                    base + card_h - 0.60,
-                    card.value,
-                    fontsize=17 if hl else 16,
-                    weight=weight,
-                    color=C["kept"] if hl else C["ink"],
-                    va="baseline",
-                )
-                self.ax.text(
-                    x + 0.14,
-                    base + 0.16,
-                    card.detail,
-                    fontsize=7.2,
-                    weight=weight,
-                    color=C["ink2"],
-                    va="baseline",
-                )
 
     def close(self) -> None:
         """Flushes the current page into the PDF."""
         if self._fig is not None:
             # PdfPages.savefig is unannotated; the typed alias keeps this module strict. The
-            # page keeps its surface colour because the figure was created under RC_PARAMS.
+            # page keeps its surface colour because the figure was created under the
+            # report's rc_context.
             save_page: Callable[[Figure], None] = self.pdf.savefig
             save_page(self._fig)
             self._fig, self._ax = None, None
 
 
 def _export_pdf(
-    target: Path, data: _RunData, content: _Content, meta: _RunMeta
+    target: Path,
+    data: _RunData,
+    content: _Content,
+    meta: _RunMeta,
+    theme: _Theme,
+    logo_png: bytes | None,
 ) -> Path:
     """A4 paginated PDF, same content as the HTML, to print or attach."""
     with PdfPages(target) as pdf:
-        page = _PdfReport(pdf)
+        page = _PdfReport(pdf, theme, logo_png)
         page.cover(data, content, meta)
         for title, figs, tables in _report_blocks(content):
             if not any(k in content.figs for k in figs) and not any(

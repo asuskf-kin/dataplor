@@ -12,11 +12,15 @@ from cleaning_agent.domain.lineage import ArtifactRef, StageRecord
 from cleaning_agent.domain.models import (
     CleaningMode,
     DatamatchInputs,
+    DatamatchStepResult,
     ExecutiveReportOutcome,
     GeojsonInputs,
+    GoldPackageRequest,
+    GoldPackageResult,
     OutputPaths,
     PrefilterResult,
     PriorizacionResult,
+    ProspectsResult,
     QAExploreResult,
     QARunResult,
     StepMetric,
@@ -100,8 +104,8 @@ class FakeAudit:
     ) -> None:
         self.finished = True
 
-    def html_report(self, metrics: list[StepMetric]) -> Path | None:
-        return Path("report.html") if metrics else None
+    def html_report(self, metrics: list[StepMetric], out_dir: Path) -> Path | None:
+        return out_dir / "report.html" if metrics else None
 
 
 @dataclass
@@ -137,20 +141,28 @@ class FakeQA:
     error: Exception | None = None
     runs: list[tuple[float, float]] = field(default_factory=list)
 
-    def explore(self, inputs: DatamatchInputs, run_id: str) -> QAExploreResult:
+    def explore(
+        self, inputs: DatamatchInputs, run_id: str, output_dir: Path
+    ) -> QAExploreResult:
         if self.error:
             raise self.error
         return QAExploreResult(
-            report_html=f"{run_id}/threshold_report.html", output_dir=run_id
+            report_html=str(output_dir / "threshold_report.html"),
+            output_dir=str(output_dir),
         )
 
     def run(
-        self, inputs: DatamatchInputs, run_id: str, match: float, super_match: float
+        self,
+        inputs: DatamatchInputs,
+        run_id: str,
+        match: float,
+        super_match: float,
+        output_dir: Path,
     ) -> QARunResult:
         self.runs.append((match, super_match))
         return QARunResult(
-            files=[f"{run_id}/Datamatch_Final_{inputs.client_name}.csv"],
-            output_dir=run_id,
+            files=[str(output_dir / f"Datamatch_Final_{inputs.client_name}.csv")],
+            output_dir=str(output_dir),
         )
 
 
@@ -184,7 +196,16 @@ class FakeStorage:
             str(local_dir / Path(b).name) for b in self.list_blobs(container, pattern)
         ]
 
-    def upload(self, files: list[str], container: str, prefix: str) -> UploadResult:
+    existing: list[str] = field(default_factory=list)
+
+    def upload(
+        self, files: list[str], container: str, prefix: str, replace: bool = False
+    ) -> UploadResult:
+        from cleaning_agent.domain.storage_errors import BlobExistsError
+
+        clash = [f for f in files if Path(f).name in self.existing]
+        if clash and not replace:
+            raise BlobExistsError(f"{container}/{prefix}/{Path(clash[0]).name}")
         if self.error:
             raise self.error
         self.uploads.append((files, container, prefix))
@@ -214,6 +235,7 @@ class FakeLineage:
 @dataclass
 class FakeExecutiveReport:
     error: Exception | None = None
+    with_xlsx: bool = False
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
     def generate(
@@ -224,6 +246,8 @@ class FakeExecutiveReport:
         bottler: str,
         premise: str,
         correlation_id: str,
+        out_dir: Path,
+        xlsx_dir: Path,
     ) -> ExecutiveReportOutcome:
         if self.error:
             raise self.error
@@ -231,21 +255,40 @@ class FakeExecutiveReport:
             (raw_csv, output_csv, country, bottler, premise, correlation_id)
         )
         return ExecutiveReportOutcome(
-            files=[f"reports/reporte_{country}_{bottler}.html"],
+            files=[str(out_dir / f"reporte_{country}_{bottler}.html")]
+            + (
+                [str(xlsx_dir / f"reporte_{country}_{bottler}.xlsx")]
+                if self.with_xlsx
+                else []
+            ),
             summary={"final_rows": 2},
         )
 
 
 @dataclass
 class FakePriorizacion:
-    def list_configs(self) -> list[str]:
-        return ["mexico_cdf.yaml"]
+    storage: Any = None  # outputs land "in Azure" so the staging step can mirror them
+    runs: list[Any] = field(default_factory=list)
+    configs: list[str] = field(
+        default_factory=lambda: ["mexico_cdf.yaml", "mexico_golfo.yaml"]
+    )
 
-    def build_config(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        return {"run": {"name": "x"}}
+    def list_configs(self) -> list[str]:
+        return list(self.configs)
+
+    def build_config(self, base_config: str, run: Any) -> dict[str, Any]:
+        self.runs.append(run)
+        return {"run": {"name": run.run_name}, "agent_run": run}
 
     def run(self, config: dict[str, Any], run_id: str) -> PriorizacionResult:
-        return PriorizacionResult(config_path="cfg.yaml", outputs=[])
+        run = config["agent_run"]
+        blobs = [f"{run.output_dir}/{n}.csv" for n in (run.step1_name, run.step2_name)]
+        if self.storage is not None:
+            self.storage.blobs.extend(blobs)
+        return PriorizacionResult(
+            config_path="cfg.yaml",
+            outputs=[f"{run.output_container}/{b}" for b in blobs],
+        )
 
 
 @dataclass
@@ -254,8 +297,35 @@ class FakeStaging:
     mirrored: list[str] = field(default_factory=list)
     metadata: list[dict[str, Any]] = field(default_factory=list)
 
+    written: dict[str, int] = field(default_factory=dict)
+
     def count_rows(self, path: str) -> int:
-        return self.rows if self.rows is not None else 4
+        if self.rows is not None:
+            return self.rows
+        return self.written.get(path, 4)
+
+    # Files "on disk" per layer folder name ("silver", "gold"), for list_files
+    on_disk: dict[str, list[str]] = field(default_factory=dict)
+
+    def list_files(self, directory: Path) -> list[str]:
+        layer = directory.parts[len(Path("data").parts)] if directory.parts else ""
+        return list(self.on_disk.get(layer, []))
+
+    copied: list[str] = field(default_factory=list)
+
+    def copy(self, source: str, target_dir: Path) -> str:
+        target = str(target_dir / Path(source).name)
+        self.copied.append(target)
+        return target
+
+    def columns(self, path: str) -> list[str]:
+        from cleaning_agent.domain.priorizacion import GEO_COLUMNS
+
+        return ["dataplor_id", *GEO_COLUMNS]
+
+    def write_parquet(self, df: pl.DataFrame, target: Path) -> str:
+        self.written[str(target)] = df.height
+        return str(target)
 
     def mirror(self, source: str, target: Path) -> str:
         self.mirrored.append(str(target))
@@ -366,6 +436,7 @@ def make_deps(
     )
     audit = FakeAudit()
     prefilter = FakePrefilter(datasets, error=prefilter_error)
+    storage = storage or FakeStorage()
     deps = Dependencies(
         prefilters={
             CleaningMode.GEOJSON: prefilter,
@@ -374,12 +445,14 @@ def make_deps(
         datasets=datasets,
         audit=audit,
         qa=qa or FakeQA(),
-        storage=storage or FakeStorage(),
+        storage=storage,
         lineage=FakeLineage(),
         executive_report=FakeExecutiveReport(),
-        priorizacion=FakePriorizacion(),
+        priorizacion=FakePriorizacion(storage=storage),
         staging=FakeStaging(),
         patterns=FakePatterns(),
+        datamatch_steps=FakeDatamatchSteps(),
+        gold_package=FakeGoldPackage(),
         defaults={
             CleaningMode.GEOJSON: GEO,
             CleaningMode.CLIENTES_BOTTLER: CLIENTS,
@@ -425,4 +498,94 @@ def answer_layer_and_front(
         view = resume(
             app, thread_id, {"result_file": FRONT_RESULT, "metadata_json": FRONT_JSON}
         )
+        kind = (view.get("interrupt") or {}).get("kind")
+    if kind == "franchise_review":
+        # Tests about later steps: Claude found no franchise left
+        view = resume(app, thread_id, {"flagged": []})
+        kind = (view.get("interrupt") or {}).get("kind")
+    if kind == "datamatch_loop":
+        # Tests about later steps: one Datamatch step is enough, prospecting continues
+        view = resume(app, thread_id, {"done": True})
     return view
+
+
+@dataclass
+class FakeGoldPackage:
+    requests: list[GoldPackageRequest] = field(default_factory=list)
+    leak_name: bool = False  # the KO file wrongly carries the name column
+
+    def build(self, request: GoldPackageRequest) -> GoldPackageResult:
+        self.requests.append(request)
+        out, names = request.out_dir, request.names()
+        ko_columns = ["dataplor_id", "prioridad", *(["name"] if self.leak_name else [])]
+        return GoldPackageResult(
+            root=[str(out / names["xlsx"]), str(out / names["deck"])],
+            ko=[
+                str(out / "results_ko" / names["ko_csv"]),
+                str(out / "results_ko" / names["ko_map"]),
+            ],
+            bottler=[
+                str(out / "results_bottler" / names["bottler_csv"]),
+                str(out / "results_bottler" / names["bottler_map"]),
+            ],
+            rows=4,
+            ko_rows=4,
+            bottler_rows=4,
+            ko_column_names=ko_columns,
+            bottler_columns=47,
+            prioritized=4,
+            figures={"hm_total": 3},
+        )
+
+
+@dataclass
+class FakeDatamatchSteps:
+    error: Exception | None = None
+    calls: list[tuple[str, str, float, int]] = field(default_factory=list)
+    prospects: list[tuple[str, list[str], str]] = field(default_factory=list)
+    known_in_file: int | None = None
+
+    def build_prospects(
+        self, cleaned_file: str, match_files: list[str], target: Path
+    ) -> ProspectsResult:
+        self.prospects.append((cleaned_file, match_files, str(target)))
+        known = 10 * len(match_files)
+        return ProspectsResult(
+            file=str(target),
+            known_ids=known,
+            known_in_file=known if self.known_in_file is None else self.known_in_file,
+            rows_in=100,
+            rows_out=100 - known,
+        )
+
+    def run(
+        self,
+        inputs: DatamatchInputs,
+        out_dir: Path,
+        report_dir: Path,
+        folder: str,
+        threshold: float,
+        history: list[dict[str, Any]],
+        correlation_id: str,
+    ) -> DatamatchStepResult:
+        if self.error:
+            raise self.error
+        self.calls.append((str(out_dir), folder, threshold, len(history)))
+        clients = out_dir / f"clients_bottler_{inputs.client_name.lower()}_{folder}.csv"
+        start = int(history[-1]["clientes_restantes"]) if history else 100
+        return DatamatchStepResult(
+            files=[str(clients), str(report_dir / "qa_process_report.xlsx")],
+            clients_file=str(clients),
+            summary={
+                "paso": folder,
+                "clientes_inicio": start,
+                "clientes_con_match": 10,
+                "clientes_restantes": start - 10,
+                "pct_encontrado": 10.0,
+                "umbral_limpieza": threshold,
+                "cuadra": True,
+                "nuevo_client_bottler": clients.name,
+                "datamatch_file": inputs.datamatch_file,
+                "clients_file": inputs.clients_file,
+            },
+        )

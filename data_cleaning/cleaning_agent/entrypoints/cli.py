@@ -162,6 +162,29 @@ def run_start(
     return describe(app, thread_id)
 
 
+def run_redo(
+    app: CompiledStateGraph[Any, Any, Any, Any], thread_id: str, after: str
+) -> dict[str, Any]:
+    """Time travel: forks the thread as if ``after`` just finished and runs on.
+
+    Used when a step's code changed (e.g. a deliverable format) and its result must be
+    regenerated without repeating the expensive steps before it. The original
+    checkpoints stay in the history.
+    """
+    if after not in app.get_graph().nodes:
+        raise SystemExit(f"Unknown node {after!r}")
+    if not app.get_state(_config(thread_id)).values:
+        raise SystemExit(f"Thread {thread_id} does not exist")
+    reset: dict[str, Any] = {"errors": [], "attempts": 0}
+    # A redo reruns a step after its code was fixed: an earlier failure must not route
+    # the fork straight to the end
+    if app.get_state(_config(thread_id)).values.get("status") == "failed":
+        reset |= {"status": "running", "error": None}
+    app.update_state(_config(thread_id), reset, as_node=after)
+    _drive(app, None, thread_id)
+    return describe(app, thread_id)
+
+
 def run_resume(
     app: CompiledStateGraph[Any, Any, Any, Any], thread_id: str, answer: Any
 ) -> dict[str, Any]:
@@ -283,6 +306,11 @@ def main(argv: list[str] | None = None) -> int:
         "interactive", help="Ask every question in the terminal"
     )
     interactive.add_argument("--thread", default=None)
+    redo = sub.add_parser(
+        "redo", help="Re-run a thread from the step after --after (keeps the history)"
+    )
+    redo.add_argument("--thread", required=True)
+    redo.add_argument("--after", required=True, help="Node whose next steps re-run")
     sub.add_parser("graph", help="Print the graph as Mermaid")
     args = parser.parse_args(argv)
 
@@ -304,6 +332,8 @@ def main(argv: list[str] | None = None) -> int:
                 view = run_resume(app, thread_id, _parse_answer(raw))
             elif args.command == "status":
                 view = describe(app, thread_id)
+            elif args.command == "redo":
+                view = run_redo(app, thread_id, args.after)
             else:
                 view = run_interactive(app, thread_id)
         except (

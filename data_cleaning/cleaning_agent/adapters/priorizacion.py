@@ -4,9 +4,10 @@ That repo pins Python 3.12 and heavy geo dependencies (h3, rasterio), so it runs
 its own environment (``uv run --project``) with cwd = its root, where its own
 ``.env`` (Azure credentials) is loaded by its code; this process never reads it.
 
-Each run gets a generated YAML based on one of the repo's run configs, with the
-input pointed at the cleaned CSV in silver and both outputs in gold/priorizacion.
-The repo's own YAMLs are never edited.
+Each run gets a generated YAML based on one of the repo's run configs (its
+parameters), with the input pointed at the gold prospects, the country's shared geo
+layers and both outputs in the DWH folder the agent resolved. The repo's own YAMLs
+are never edited.
 """
 
 import logging
@@ -19,7 +20,7 @@ from typing import Any
 
 import yaml
 
-from cleaning_agent.domain.models import PriorizacionResult
+from cleaning_agent.domain.models import PriorizacionResult, PriorizacionRun
 
 logger = logging.getLogger(__name__)
 
@@ -41,37 +42,33 @@ class PriorizacionSubprocess:
             return []
         return sorted(p.name for p in self.repo_dir.glob("*.yaml"))
 
-    def build_config(
-        self,
-        base_config: str,
-        input_blob: str,
-        container: str,
-        output_dir: str,
-        bottler: str,
-        country: str,
-        period: str,
-    ) -> dict[str, Any]:
+    def build_config(self, base_config: str, run: PriorizacionRun) -> dict[str, Any]:
         base = self.repo_dir / base_config
         if base_config not in self.list_configs():
             raise PriorizacionError(f"Unknown priorización config: {base_config}")
         config: dict[str, Any] = yaml.safe_load(base.read_text(encoding="utf-8"))
         step1, step2 = config["step1_priority"], config["step2_geo"]
-        # Single base: the cleaned Dataplor in silver (the agent's QA output is separate)
+        # Single base: the prospects already carry every column the score needs
         step1["inputs"] = {
-            "dataplor": {"file_path": input_blob, "container_name": container}
+            "dataplor": {
+                "file_path": run.input_blob,
+                "container_name": run.input_container,
+            }
         }
-        step1["output"] = {
-            "file_path": f"{output_dir}/",
-            "container_name": container,
-            "file_name": f"1_priority_{bottler}_{country}_{period}",
+        output = {
+            "file_path": f"{run.output_dir}/",
+            "container_name": run.output_container,
         }
+        step1["output"] = {**output, "file_name": run.step1_name}
         step2["inputs"] = {"priority": None}  # step 2 reads step 1's output
-        step2["output"] = {
-            "file_path": f"{output_dir}/",
-            "container_name": container,
-            "file_name": f"Dataplor_on_premise_priority_{bottler}_{country}_{period}",
+        step2["output"] = {**output, "file_name": run.step2_name}
+        # The base YAML is another country's: its geo layers must be this country's
+        step2["geodata"] = {
+            **(step2.get("geodata") or {}),
+            "prefix": run.geodata_prefix,
+            "container_name": run.output_container,
         }
-        config["run"] = {"name": f"{bottler}_{country}_{period}"}
+        config["run"] = {"name": run.run_name}
         return config
 
     def run(self, config: dict[str, Any], run_id: str) -> PriorizacionResult:

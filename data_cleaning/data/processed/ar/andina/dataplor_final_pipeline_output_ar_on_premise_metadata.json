@@ -1,0 +1,81 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "pipeline_data_clean",
+  "name": "Pipeline Data clean (módulos 1, 2, 3, 4, 5, 6)",
+  "started_at": "2026-11-10T18:54:32+00:00",
+  "finished_at": "2026-11-10T18:54:37+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\dataplor_cleaned_2.csv",
+      "rows": 169986,
+      "bytes": 315749543,
+      "sha256": "22cfa34415b9619e8c2a3d445d01a158125286f847e07422b1b616cf286c02cb",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise.csv",
+      "rows": 94333,
+      "bytes": 174797178,
+      "sha256": "23447f0e40cd6ba1319807b695165b79a9894591f8b9c4c2c767bb555ab91af6",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_v2.csv",
+      "rows": null,
+      "bytes": 174797178,
+      "sha256": "23447f0e40cd6ba1319807b695165b79a9894591f8b9c4c2c767bb555ab91af6",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_sin_franquicias.csv",
+      "rows": null,
+      "bytes": 173107738,
+      "sha256": "450a7e918307d0b78ff61ed286e397c9cf0e6b5e4056b9ad4ecc9e6285888a55",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "steps": [
+      {
+        "module": "Module 1: Normalization",
+        "dropped": 0,
+        "remaining": 169986
+      },
+      {
+        "module": "Module 2: Chain Filter",
+        "dropped": 65407,
+        "remaining": 104579
+      },
+      {
+        "module": "Module 3: BallTree Dedup",
+        "dropped": 73,
+        "remaining": 104506
+      },
+      {
+        "module": "Module 4: Hours & Fuzzy",
+        "dropped": 1364,
+        "remaining": 103142
+      },
+      {
+        "module": "Module 5: Final Regex",
+        "dropped": 8402,
+        "remaining": 94740
+      },
+      {
+        "module": "Module 6: Crowded Property",
+        "dropped": 407,
+        "remaining": 94333
+      }
+    ],
+    "approved_note": null
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise.csv",
+    "rows": 94333,
+    "bytes": 174797178,
+    "sha256": "23447f0e40cd6ba1319807b695165b79a9894591f8b9c4c2c767bb555ab91af6"
+  }
+}

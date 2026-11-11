@@ -1,0 +1,34 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "qa_explore",
+  "name": "QA Datamatch: reporte de thresholds",
+  "started_at": "2026-11-11T15:15:58+00:00",
+  "finished_at": "2026-11-11T15:16:02+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\20261110_data_match_process\\20261110\\final_output.csv",
+      "rows": null,
+      "bytes": 13137776,
+      "sha256": "37db2aa0906250391f12f8db38640eed34ffb6bf38b0e3d866e6e0c2f06f272d",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\dataplor\\20261109\\threshold_report_andina_20261111.html",
+      "rows": null,
+      "bytes": 386507,
+      "sha256": "5c43d1cbbfddf7ba5a3bacefcd5f355726e79d10cda81d15b246f0a707dffed8",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "client_name": "andina"
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\dataplor\\20261109\\threshold_report_andina_20261111.html",
+    "bytes": 386507,
+    "sha256": "5c43d1cbbfddf7ba5a3bacefcd5f355726e79d10cda81d15b246f0a707dffed8"
+  }
+}

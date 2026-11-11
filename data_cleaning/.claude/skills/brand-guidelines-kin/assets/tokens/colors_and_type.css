@@ -1,0 +1,111 @@
+/* ============================================================================
+   Kin Analytics — Design Tokens (single source of truth for color + type)
+   Synced from the Kin Design System (Claude Design). On any conflict the
+   Design System wins. Do not hand-invent values; every color/type decision
+   in the skill must resolve to a token here.
+   ============================================================================ */
+
+:root {
+  /* ---- Core brand ---- */
+  --ka-color-yellow:            #E5FF01; /* Kin Yellow — accent only (~3%), identical in both themes */
+  --ka-color-black:             #141417; /* Black 6 */
+  --ka-color-white:             #FFFFFF;
+
+  /* ---- Grays (full 7-step scale) ---- */
+  --ka-color-gray-1:            #EFEFEE; /* Cool Gray 1 */
+  --ka-color-gray-2:            #D4D5D6; /* Pantone 427 */
+  --ka-color-gray-3:            #999EA6; /* Pantone 429 — secondary text, axis labels, URL color */
+  --ka-color-gray-4:            #222326; /* Pantone 432 — dark surface, duotone shadow */
+
+  /* ---- Surfaces / backgrounds (LIGHT — default) ---- */
+  --ka-color-bg:                var(--ka-color-white); /* default page surface */
+  --ka-color-bg-layout:         #F2F2F2;               /* recessed layout gray behind cards */
+  --ka-color-bg-gray2:          var(--ka-color-gray-2);/* presentation-surface gray: cover + light divider (NEW) */
+  --ka-color-surface:           var(--ka-color-white);
+
+  /* ---- Text (LIGHT) ---- */
+  --ka-color-text-primary:      var(--ka-color-black);
+  --ka-color-text-secondary:    var(--ka-color-gray-3);
+
+  /* ---- Border / lines (LIGHT) ---- */
+  --ka-color-border:            var(--ka-color-gray-2);
+
+  /* ---- Accent / focal ---- */
+  --ka-color-accent:            var(--ka-color-yellow);
+
+  /* ---- Photography duotone (both themes) ---- */
+  --ka-color-duotone-shadow:    var(--ka-color-gray-4); /* #222326 */
+  --ka-color-duotone-highlight: #D8D8D5;                /* warm light gray */
+
+  /* ---- Chart series order (Yellow is always primary) ---- */
+  --ka-chart-1:                 var(--ka-color-yellow);
+  --ka-chart-2:                 var(--ka-color-white);
+  --ka-chart-3:                 var(--ka-color-gray-3);
+  --ka-chart-4:                 var(--ka-color-black);
+
+  /* ---- Shadow (brand is flat — say so as a token) ---- */
+  --ka-shadow:                  none;
+
+  /* ---- Radius ---- */
+  --ka-radius-base:             4px;
+  --ka-radius-box:              12px;   /* default content-box corner */
+  --ka-radius-pill:             999px;  /* small status pills / toggles only */
+
+  /* ---- Typography — families ---- */
+  --ka-font-display: 'Space Grotesk', system-ui, sans-serif; /* display / titles / numerals / stats */
+  --ka-font-body:    'Albert Sans', system-ui, sans-serif;   /* body / paragraphs / UI labels */
+
+  /* ---- Type weights ---- */
+  --ka-weight-light:     300;
+  --ka-weight-regular:   400;
+  --ka-weight-medium:    500;
+  --ka-weight-semibold:  600;
+  --ka-weight-bold:      700;
+
+  /* ---- Type scale (display → overline) ---- */
+  --ka-size-display:  clamp(2.5rem, 5vw, 4rem);
+  --ka-size-h1:       2.25rem;
+  --ka-size-h2:       1.75rem;
+  --ka-size-h3:       1.375rem;
+  --ka-size-body:     1rem;
+  --ka-size-caption:  0.8125rem;
+  --ka-size-overline: 0.75rem;
+
+  --ka-lh-tight:      1.1;
+  --ka-lh-body:       1.6;
+  --ka-tracking-eyebrow: 0.08em;
+}
+
+/* ============================================================================
+   DARK THEME — surface / text / border / shadow flip together.
+   Kin Yellow is intentionally identical to light.
+   ============================================================================ */
+[data-theme="dark"] {
+  --ka-color-bg:             var(--ka-color-black);   /* #141417 */
+  --ka-color-bg-layout:      #1c1c20;                 /* recessed dark panel */
+  --ka-color-bg-gray2:       var(--ka-color-gray-4);  /* gray2 maps to #222326 in dark */
+  --ka-color-surface:        var(--ka-color-gray-4);  /* #222326 */
+
+  --ka-color-text-primary:   var(--ka-color-white);
+  --ka-color-text-secondary: var(--ka-color-gray-3);
+
+  --ka-color-border:         var(--ka-color-gray-4);
+
+  /* accent unchanged */
+  --ka-color-accent:         var(--ka-color-yellow);
+}
+
+/* ============================================================================
+   kinanalytics.com rule — always Albert Sans Medium 500, Gray 3, lowercase.
+   Never Space Grotesk. Applies to header, footer, and any document.
+   ============================================================================ */
+.ka-site {
+  font-family: var(--ka-font-body);
+  font-weight: var(--ka-weight-medium);
+  font-size: 12px;
+  color: var(--ka-color-gray-3);
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+/* Base @font-face live in references/web-html.md (base64-embedded for offline/PDF). */

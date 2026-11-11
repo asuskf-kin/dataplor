@@ -5,7 +5,7 @@ are stored here as ``model_dump()`` dicts.
 """
 
 import operator
-from typing import Annotated, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
 
 from cleaning_agent.application.graph.progress import merge_steps
 
@@ -79,11 +79,18 @@ class CleaningState(TypedDict, total=False):
     lineage_path: str | None
     # File set waiting for (or done with) a DWH layer upload approval
     pending_upload: dict[str, object] | None
+    # Datamatch loop: one summary per step (overwritten as a whole, keyed by step)
+    datamatch_history: list[dict[str, object]]
+    datamatch_loop_done: bool
+    qa_process_date: str
     # Front step after bronze: what the person gave back and its local mirror copies
     front: dict[str, object] | None
     front_local: dict[str, str] | None
     # Country chain patterns: status, last update and whether they were refreshed
     patterns: dict[str, object] | None
+    # Franchise review (Claude Code) and the person's decision
+    franchises: dict[str, Any] | None
+    priorizacion_outputs: list[str]
     # Appended by every stage: lineage records, their sidecar files and things to check
     lineage: Annotated[list[dict[str, object]], operator.add]
     sidecars: Annotated[list[str], operator.add]

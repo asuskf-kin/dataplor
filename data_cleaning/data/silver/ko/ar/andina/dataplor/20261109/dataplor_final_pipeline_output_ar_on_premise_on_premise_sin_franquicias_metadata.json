@@ -1,0 +1,77 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "executive_report",
+  "name": "Reporte ejecutivo (ex report.ipynb)",
+  "started_at": "2026-11-10T18:54:37+00:00",
+  "finished_at": "2026-11-10T18:55:04+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\processed\\ar\\andina\\dataplor_final_pipeline_output_ar_on_premise_sin_franquicias.csv",
+      "rows": null,
+      "bytes": 173107738,
+      "sha256": "450a7e918307d0b78ff61ed286e397c9cf0e6b5e4056b9ad4ecc9e6285888a55",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\dataplor_final_pipeline_output_ar_on_premise_on_premise_sin_franquicias.csv",
+      "rows": null,
+      "bytes": 102634816,
+      "sha256": "3311ca77288eb494736e2c682c86803b1883d41b3b6df7d3dbc390acd27a68d6",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\reporte_ejecutivo_ar_on_premise_andina_20261110_135437.xlsx",
+      "rows": null,
+      "bytes": 71239,
+      "sha256": "c56d81850bc695fb05f4d7e1fb8b6c9ec4a1acbe7b02b94c1e2f62184ca005b6",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\reporte_ejecutivo_ar_on_premise_andina_20261110_135437.html",
+      "rows": null,
+      "bytes": 704772,
+      "sha256": "01466df9e53acec724086e94d12671455632e04eab7b93ee169209052422c36f",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\reporte_ejecutivo_ar_on_premise_andina_20261110_135437.pdf",
+      "rows": null,
+      "bytes": 476126,
+      "sha256": "43a2b7dc423c2a3967cf6c861132198d8a702ad155413c31991be0db467d2d9f",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "country": "AR",
+    "bottler": "andina",
+    "channel": "On Premise",
+    "report_name": "reporte_ejecutivo_ar_on_premise_andina_20261110_135437",
+    "initial_rows": 169986,
+    "pipeline_steps": 5,
+    "pipeline_drops": 75653,
+    "full_dataset_rows": 94333,
+    "out_of_channel_rows": 37767,
+    "channel_rows": 56566,
+    "manual_deletions": 579,
+    "final_rows": 55987,
+    "total_drops": 113999,
+    "retention_pct": 32.9362,
+    "reconciliation_gap": 0,
+    "warnings": 0,
+    "drops_step_00": 0,
+    "drops_step_01": 0,
+    "drops_step_02": 65407,
+    "drops_step_03": 73,
+    "drops_step_04": 1364,
+    "drops_step_05": 8402,
+    "drops_step_06": 407
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\dataplor\\20261109\\dataplor_final_pipeline_output_ar_on_premise_on_premise_sin_franquicias.csv",
+    "bytes": 102634816,
+    "sha256": "3311ca77288eb494736e2c682c86803b1883d41b3b6df7d3dbc390acd27a68d6"
+  }
+}

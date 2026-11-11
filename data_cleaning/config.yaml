@@ -43,6 +43,8 @@ agent:
 # Es el contenedor por defecto ÚNICAMENTE para el Dataplor raw.
 dataplor_raw:
   container: "dataplorraw"
+  # Contenedor por defecto del resultado del Front (CSV limpio + json_config.json)
+  front_container: "prospection-datacleaning"
   local_dir: "data/raw"   # se descarga en data/raw/<pais>/<bottler>/dataplor_raw/
 
 # Datawarehouse de prod: capas drop_zone -> bronze -> silver -> gold, fecha yyyymmdd.
@@ -50,8 +52,12 @@ dataplor_raw:
 # preguntando antes. El espejo local replica la misma ruta bajo mirror_dir.
 dwh:
   container: "prospecting-data"
-  path_template: "{layer}/ko/{pais}/{bottler}/{fecha}"   # ej. bronze/ko/ar/andina/20261109
+  path_template: "{layer}/ko/{pais}/{bottler}/dataplor/{fecha}"   # ej. bronze/ko/ar/andina/dataplor/20261109 (+ /distance | /clients_bottler)
   mirror_dir: "data"
+
+# Marca Kin para todo entregable HTML/PDF/imagen (skill brand-guidelines-kin).
+brand:
+  assets_dir: ".claude/skills/brand-guidelines-kin/assets"
 
 # Modo "geojson": cruza el Parquet CRUDO de Dataplor con el territorio del embotellador
 # y deja solo puntos activos, abiertos y dentro de los polígonos.
@@ -93,11 +99,48 @@ datamatch:
   thresholds:
     match: 0.71
     super_match: 0.80
+  # Ciclo de Datamatch (Front <-> agente): por cada paso, los clientes con
+  # total_score > este valor ya tienen su punto Dataplor y salen de la base; la base
+  # reducida va a silver/.../data_match_process/qa_process/<fecha>/<paso>/ para el
+  # siguiente paso (<fecha> = día del primer paso del ciclo).
+  step_cleanup_threshold: 0.5
+  # Prospectos (Dataplor limpio sin los clientes ya encontrados): primer dato de gold
+  prospects_template: "{layer}/ko/{pais}/{bottler}/prospecting-data/{fecha}"
+  qa_process_template: "{layer}/ko/{pais}/{bottler}/data_match_process/qa_process/{fecha}"
+  # Columnas del resultado del Front (.c = base de clientes, .o = Dataplor)
+  step_columns:
+    match_client_id: "id.c"
+    match_dataplor_id: "id.o"
+    score: "total_score"
+    client_id: "pos_id"
+    dataplor_id: "dataplor_id"
 
 # Priorización On Premise (se corre con su propio entorno: uv run --project; usa su .env).
 priorizacion:
+  # YAML del repo que aporta los parámetros cuando el país no tiene uno propio (Golfo es
+  # de base única, como los prospectos); las capas geográficas se cambian al país.
+  base_config: "mexico_golfo.yaml"
+  # Salidas: {pais_nombre} = nombre del país en priorización (ar -> argentina)
+  output_template: "{layer}/ko/{pais}/{bottler}/providers/dataplor_on_premise_priority_{bottler}_{pais_nombre}/{fecha}"
   repo_dir: "../../Priorizacion_On_Premise_code"
   timeout_s: 3600
+
+# Paquete gold de entrega (modelo: paquete aprobado de Golfo). Va en la carpeta gold de los
+# prospectos: Excel de oportunidad + deck en la raíz, results_ko/ y results_bottler/ con su CSV
+# y su mapa offline (sin API). KO no lleva nombres, coordenadas ni datos de clientes.
+gold_package:
+  deck_template: "cleaning_agent/adapters/assets/prospecting_deck_template.pptx"
+  # Nombre del cliente en el deck; {bottler} = embotellador (ej. Andina)
+  client_label: "Coca-Cola {bottler}"
+  # Contactos de la última lámina (personal de Kin); vacío = sin contactos
+  contacts: []
+  # Columnas de la base de clientes que se leen (solo para la versión BOTTLER)
+  client_columns:
+    id: "pos_id"
+    latitude: "pos_latitude"
+    longitude: "pos_longitude"
+    city: "pos_city"
+    reference: ["pos_id", "pos_gerencia", "pos_name", "pos_jefatura"]
 
 # Guardar entregables en Azure Blob Storage (siempre pide confirmación antes de subir).
 # Credenciales SOLO por variables de entorno (ver .env.example):
@@ -119,8 +162,8 @@ paths:
 
 # Reporte ejecutivo (report.ipynb)
 reporte:
-  # Carpeta de salida de los reportes
-  carpeta: "reports"
+  # Sin carpeta propia: van al espejo del DWH. HTML/PDF/CSV del canal -> silver,
+  # Excel -> gold (data/<capa>/ko/<pais>/<bottler>/dataplor/<fecha>/).
 
   # Nombre base de los archivos, sin extensión. Se generan .html y .pdf con ese nombre.
   # Placeholders disponibles: {pais}, {canal}, {bottler}, {fecha}

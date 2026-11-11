@@ -22,9 +22,14 @@ from cleaning_agent.application.graph.nodes import (
     _retry,
     _validate,
     bottler_folder,
+    layer_dir,
     record_stage,
 )
 from cleaning_agent.application.graph.state import CleaningState
+from cleaning_agent.application.graph.warehouse_nodes import (
+    check_remote,
+    with_dwh_container,
+)
 from cleaning_agent.domain.lineage import (
     LINEAGE_FILE,
     StageRecord,
@@ -32,11 +37,11 @@ from cleaning_agent.domain.lineage import (
     now_iso,
 )
 from cleaning_agent.domain.models import (
-    DatamatchChoice,
     DatamatchInputs,
     ThresholdDecision,
     UploadDecision,
 )
+from cleaning_agent.domain.warehouse import Layer
 
 # The QA adapter raises RuntimeError subclasses; files/config problems are OSError/ValueError
 DELIVERY_ERRORS = (RuntimeError, OSError, ValueError)
@@ -44,23 +49,6 @@ DELIVERY_ERRORS = (RuntimeError, OSError, ValueError)
 
 def _bottler(state: CleaningState) -> str:
     return bottler_folder(state.get("bottler", ""))
-
-
-def ask_datamatch(state: CleaningState) -> Update:
-    """HITL 5. Done when run_datamatch is True or False."""
-    answer = interrupt(
-        {
-            "kind": "ask_datamatch",
-            "question": "¿Hacemos Datamatch con este resultado?",
-            "output_csv": state.get("output_path"),
-            "answer_format": {"run_datamatch": True},
-            "errors": state.get("errors", []),
-        }
-    )
-    parsed = _validate(DatamatchChoice, answer)
-    if isinstance(parsed, list):
-        return _retry(state, parsed)
-    return {"run_datamatch": parsed.run_datamatch, **_ok()}
 
 
 def make_front_datamatch(deps: Dependencies) -> NodeFn:
@@ -83,6 +71,7 @@ def make_front_datamatch(deps: Dependencies) -> NodeFn:
                 ),
                 "front_url": deps.front_url,
                 "file_to_upload": state.get("output_path"),
+                "default_container": deps.dwh_container,
                 "defaults": defaults,
                 "schema": DatamatchInputs.model_json_schema(),
                 "errors": state.get("errors", []),
@@ -96,14 +85,21 @@ def make_front_datamatch(deps: Dependencies) -> NodeFn:
                 **_retry(state, parsed),
                 "datamatch": answer if isinstance(answer, dict) else None,
             }
-        missing = [
-            f"{name}: file not found {path}"
-            for name, path in (
-                ("datamatch_file", parsed.datamatch_file),
-                ("clients_file", parsed.clients_file),
-            )
-            if not deps.datasets.exists(path)
-        ]
+        # Local file or blob; DWH paths without a container go to prospecting-data
+        parsed = parsed.model_copy(
+            update={
+                "datamatch_file": with_dwh_container(deps, parsed.datamatch_file),
+                "clients_file": with_dwh_container(deps, parsed.clients_file),
+                "step_json": with_dwh_container(deps, parsed.step_json)
+                if parsed.step_json
+                else "",
+            }
+        )
+        missing = check_remote(
+            deps, "datamatch_file", parsed.datamatch_file
+        ) + check_remote(deps, "clients_file", parsed.clients_file)
+        if parsed.step_json:
+            missing += check_remote(deps, "step_json", parsed.step_json)
         if missing:
             return {**_retry(state, missing), "datamatch": parsed.model_dump()}
         return {"datamatch": parsed.model_dump(), **_ok()}
@@ -113,14 +109,30 @@ def make_front_datamatch(deps: Dependencies) -> NodeFn:
 
 def make_qa_explore(deps: Dependencies) -> NodeFn:
     def qa_explore(state: CleaningState) -> Update:
-        """Done when the QA threshold report (HTML) exists, or the run failed."""
+        """Done when the QA threshold report (HTML, on-brand) is in the gold mirror with
+        its metadata, or the run failed."""
         inputs = DatamatchInputs.model_validate(state["datamatch"])
+        started = now_iso()
         try:
-            result = deps.qa.explore(inputs, state["run_id"])
+            # The QA deliverables belong to gold (user, 2026-11-11)
+            result = deps.qa.explore(
+                inputs, state["run_id"], layer_dir(deps, state, Layer.GOLD)
+            )
         except DELIVERY_ERRORS as exc:
             _logger(state).error("QA explore failed: %s", exc)
             return {"status": "failed", "error": f"QA datamatch (explore): {exc}"}
-        return {"qa_report": result.report_html}
+        lineage = record_stage(
+            deps,
+            state,
+            "qa_explore",
+            "QA Datamatch: reporte de thresholds",
+            started,
+            # Client base: only its path is recorded in the run, never its rows
+            [deps.lineage.describe(inputs.datamatch_file)],
+            [deps.lineage.describe(result.report_html)],
+            {"client_name": inputs.client_name},
+        )
+        return {"qa_report": result.report_html, **lineage}
 
     return qa_explore
 
@@ -158,7 +170,11 @@ def make_qa_run(deps: Dependencies) -> NodeFn:
         thresholds = ThresholdDecision.model_validate(state["thresholds"])
         try:
             result = deps.qa.run(
-                inputs, state["run_id"], thresholds.match, thresholds.super_match
+                inputs,
+                state["run_id"],
+                thresholds.match,
+                thresholds.super_match,
+                layer_dir(deps, state, Layer.GOLD),
             )
         except DELIVERY_ERRORS as exc:
             _logger(state).error("QA run failed: %s", exc)
@@ -265,11 +281,15 @@ def make_executive_report(deps: Dependencies) -> NodeFn:
         try:
             outcome = deps.executive_report.generate(
                 str(inputs["raw_csv"]),
-                str(state["output_path"]),
+                str(inputs.get("output_csv") or state["output_path"]),
                 state.get("country", ""),
                 state.get("bottler", ""),
                 state.get("premise", ""),
                 state["run_id"],
+                # Every report file is a silver deliverable, the Excel included; gold
+                # gets a copy of the Excel + metadata later (user, 2026-11-10)
+                layer_dir(deps, state, Layer.SILVER),
+                layer_dir(deps, state, Layer.SILVER),
             )
         except DELIVERY_ERRORS + (KeyError,) as exc:
             _logger(state).warning("Executive report failed: %s", exc)
@@ -284,11 +304,23 @@ def make_executive_report(deps: Dependencies) -> NodeFn:
             [deps.lineage.describe(path) for path in outcome.files],
             outcome.summary,
         )
-        return {
+        update: Update = {
             "report_files": outcome.files,
             "report_summary": outcome.summary,
             **lineage,
         }
+        pending = state.get("pending_upload") or {}
+        if pending.get("layer") == Layer.SILVER.value:
+            # The silver upload is the whole silver mirror folder (cleaned parquet,
+            # drop report, executive HTML/PDF, channel CSV and their metadata)
+            listed = deps.staging.list_files(layer_dir(deps, state, Layer.SILVER))
+            raw_files = pending.get("files")
+            files = [str(f) for f in raw_files] if isinstance(raw_files, list) else []
+            update["pending_upload"] = {
+                **pending,
+                "files": files + [f for f in listed if f not in files],
+            }
+        return update
 
     return executive_report
 

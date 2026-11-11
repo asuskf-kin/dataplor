@@ -5,8 +5,11 @@ from pathlib import Path
 from typing import Any
 
 from cleaning_agent.adapters.azure_storage import AzureBlobStorage
+from cleaning_agent.adapters.brand import KinBrand
+from cleaning_agent.adapters.datamatch_steps import FileDatamatchSteps
 from cleaning_agent.adapters.executive_report import FileExecutiveReport
 from cleaning_agent.adapters.filesystem import FileSystemAudit, FileSystemDatasets
+from cleaning_agent.adapters.gold_package import FileGoldPackage
 from cleaning_agent.adapters.layer_staging import FileLayerStaging
 from cleaning_agent.adapters.lineage import FileLineage
 from cleaning_agent.adapters.patterns_files import FilePatterns
@@ -22,10 +25,12 @@ from cleaning_agent.domain.models import CleaningMode
 from cleaning_agent.settings import (
     AGENT_SETTINGS,
     AZURE_SETTINGS,
+    BRAND_SETTINGS,
     CLIENT_SETTINGS,
     DATA_DIR,
     DATAMATCH_SETTINGS,
     DWH_SETTINGS,
+    GOLD_PACKAGE_SETTINGS,
     NIGHTLIFE_SETTINGS,
     PRIORIZACION_SETTINGS,
     PROJECT_ROOT,
@@ -51,6 +56,9 @@ def checkpoints_path() -> Path:
 
 
 def default_dependencies() -> Dependencies:
+    # One brand instance: every deliverable (QA pages, drop report, executive report)
+    # embeds the same fonts, tokens and logo files
+    brand = KinBrand(PROJECT_ROOT / str(BRAND_SETTINGS["assets_dir"]))
     return Dependencies(
         prefilters={
             CleaningMode.GEOJSON: TerritoryPrefilter(PROJECT_ROOT),
@@ -59,19 +67,20 @@ def default_dependencies() -> Dependencies:
         datasets=FileSystemDatasets(
             PROJECT_ROOT, DATA_DIR, PROJECT_ROOT / str(AGENT_SETTINGS["runs_dir"])
         ),
-        audit=FileSystemAudit(DATA_DIR),
+        audit=FileSystemAudit(DATA_DIR, brand),
         qa=QADatamatchSubprocess(
             PROJECT_ROOT,
             (PROJECT_ROOT / str(DATAMATCH_SETTINGS["qa_project_dir"])).resolve(),
             PROJECT_ROOT / str(AGENT_SETTINGS["runs_dir"]),
+            brand,
             timeout_s=float(DATAMATCH_SETTINGS["qa_timeout_s"]),
         ),
         lineage=FileLineage(PROJECT_ROOT),
         executive_report=FileExecutiveReport(
             PROJECT_ROOT,
             DATA_DIR / "dropped",
-            PROJECT_ROOT / str(REPORT_SETTINGS["carpeta"]),
             str(REPORT_SETTINGS["nombre"]),
+            brand,
         ),
         priorizacion=PriorizacionSubprocess(
             (PROJECT_ROOT / str(PRIORIZACION_SETTINGS["repo_dir"])).resolve(),
@@ -80,8 +89,50 @@ def default_dependencies() -> Dependencies:
         ),
         modules_for=partial(catalog_for, nightlife=NIGHTLIFE_SETTINGS),
         raw_container=str(RAW_SETTINGS["container"]),
+        front_container=str(RAW_SETTINGS["front_container"]),
         raw_local_dir=PROJECT_ROOT / str(RAW_SETTINGS["local_dir"]),
-        staging=FileLayerStaging(),
+        staging=FileLayerStaging(brand),
+        gold_package=FileGoldPackage(
+            PROJECT_ROOT,
+            brand,
+            PROJECT_ROOT / str(GOLD_PACKAGE_SETTINGS["deck_template"]),
+        ),
+        gold_client_label=str(GOLD_PACKAGE_SETTINGS["client_label"]),
+        gold_contacts=tuple(str(c) for c in GOLD_PACKAGE_SETTINGS["contacts"] or []),
+        gold_client_columns=dict(GOLD_PACKAGE_SETTINGS["client_columns"] or {}),
+        datamatch_steps=FileDatamatchSteps(
+            PROJECT_ROOT,
+            brand,
+            {
+                str(k): str(v)
+                for k, v in (DATAMATCH_SETTINGS.get("step_columns") or {}).items()
+            },
+        ),
+        qa_process_template=str(
+            DATAMATCH_SETTINGS.get(
+                "qa_process_template",
+                "{layer}/ko/{pais}/{bottler}/data_match_process/qa_process/{fecha}",
+            )
+        ),
+        prospects_template=str(
+            DATAMATCH_SETTINGS.get(
+                "prospects_template",
+                "{layer}/ko/{pais}/{bottler}/prospecting-data/{fecha}",
+            )
+        ),
+        priorizacion_base_config=str(
+            PRIORIZACION_SETTINGS.get("base_config", "mexico_golfo.yaml")
+        ),
+        priorizacion_output_template=str(
+            PRIORIZACION_SETTINGS.get(
+                "output_template",
+                "{layer}/ko/{pais}/{bottler}/providers/"
+                "dataplor_on_premise_priority_{bottler}_{pais_nombre}/{fecha}",
+            )
+        ),
+        datamatch_step_threshold=float(
+            DATAMATCH_SETTINGS.get("step_cleanup_threshold", 0.5)
+        ),
         patterns=FilePatterns(
             PROJECT_ROOT, PROJECT_ROOT / "cleaning_agent" / "domain" / "patterns"
         ),

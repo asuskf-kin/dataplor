@@ -140,3 +140,25 @@ def test_cli_rejects_bad_thread_ids_and_json():
         _check_thread_id("../etc")
     with pytest.raises(SystemExit, match="not valid JSON"):
         _parse_answer("{mode: geojson}")
+
+
+def test_priorizacion_names_and_shared_geo_layers():
+    from cleaning_agent.domain.priorizacion import geodata_prefix, output_names
+
+    assert output_names("andina", "ar", "202611") == (
+        "1_priority_andina_argentina_202611",
+        "dataplor_on_premise_priority_andina_argentina_202611",
+    )
+    assert (
+        geodata_prefix("ar")
+        == "bronze/providers/dataplor/sl/argentina/WorldPop_Overpass/"
+    )
+
+
+def test_priorizacion_qa_needs_same_rows_and_the_geo_columns():
+    from cleaning_agent.domain.priorizacion import GEO_COLUMNS, priorizacion_qa
+
+    assert priorizacion_qa(10, 10, 10, list(GEO_COLUMNS))["qa_ok"]
+    broken = priorizacion_qa(10, 10, 9, ["hex_id"])
+    assert [c["ok"] for c in broken["checks"]] == [True, False, False]
+    assert not priorizacion_qa(10, 11, 11, list(GEO_COLUMNS))["qa_ok"]

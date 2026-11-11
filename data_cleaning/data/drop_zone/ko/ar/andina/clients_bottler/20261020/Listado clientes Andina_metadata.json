@@ -1,0 +1,60 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "fetch_datamatch",
+  "name": "Resultado de Datamatch y base de clientes (espejo local)",
+  "started_at": "2026-11-11T15:47:34+00:00",
+  "finished_at": "2026-11-11T15:47:36+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "prospecting-data/silver/ko/ar/andina/20261110_data_match_process/20261110/final_output.csv",
+      "rows": null,
+      "bytes": null,
+      "sha256": null,
+      "blob": "prospecting-data/silver/ko/ar/andina/20261110_data_match_process/20261110/final_output.csv"
+    },
+    {
+      "path": "prospecting-data/drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv",
+      "rows": null,
+      "bytes": null,
+      "sha256": null,
+      "blob": "prospecting-data/drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv"
+    },
+    {
+      "path": "C:\\Users\\KIN\\Downloads\\paso1.json",
+      "rows": null,
+      "bytes": 1456,
+      "sha256": "f88fb28f8ee5b40b9886f0864753b88382fb96d9350b780bc82a52cbff1fc885",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\silver\\ko\\ar\\andina\\20261110_data_match_process\\20261110\\final_output.csv",
+      "rows": null,
+      "bytes": 13137776,
+      "sha256": "37db2aa0906250391f12f8db38640eed34ffb6bf38b0e3d866e6e0c2f06f272d",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\drop_zone\\ko\\ar\\andina\\clients_bottler\\20261020\\Listado clientes Andina.csv",
+      "rows": null,
+      "bytes": 11177966,
+      "sha256": "ffb47859e7bccaa8117330db967e7e074ab3b872af2e89e46d9011e4bdea0678",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Downloads\\paso1.json",
+      "rows": null,
+      "bytes": 1456,
+      "sha256": "f88fb28f8ee5b40b9886f0864753b88382fb96d9350b780bc82a52cbff1fc885",
+      "blob": null
+    }
+  ],
+  "metrics": {},
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\drop_zone\\ko\\ar\\andina\\clients_bottler\\20261020\\Listado clientes Andina.csv",
+    "bytes": 11177966,
+    "sha256": "ffb47859e7bccaa8117330db967e7e074ab3b872af2e89e46d9011e4bdea0678"
+  }
+}

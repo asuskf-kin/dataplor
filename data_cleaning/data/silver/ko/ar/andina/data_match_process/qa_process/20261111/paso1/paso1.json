@@ -1,0 +1,60 @@
+{
+  "methods": {
+    "second_step": "fuzzy",
+    "resolution_fs": 8,
+    "selected_steps": "both",
+    "first_step": "fuzzy",
+    "resolution_ss": 9
+  },
+  "docId": "S1G63MH4HV4zzREanw5A",
+  "create_options_by": {
+    "address": "true",
+    "lat_long": "false",
+    "threshold_address": 0.1
+  },
+  "client": {
+    "columns": {
+      "latitude": "pos_latitude",
+      "name": "pos_name",
+      "address": "pos_address",
+      "longitude": "pos_longitude",
+      "id": "pos_id"
+    },
+    "container_name": "prospecting-data",
+    "file_path": "drop_zone/ko/ar/andina/clients...",
+    "file_type": "csv"
+  },
+  "additional_columns": {
+    "options_columns": [],
+    "client_columns": []
+  },
+  "parameters": {
+    "threshold": 0.54,
+    "name_weight": 0.32,
+    "position_weight": 0.29,
+    "phonetic_weight": 0.22,
+    "address_weight": 0.17
+  },
+  "slack": {
+    "person_in_charge": "David Farinango"
+  },
+  "options": {
+    "file_path": "silver/ko/ar/andina/dataplor/2...",
+    "container_name": "prospecting-data",
+    "columns": {
+      "longitude": "longitude",
+      "id": "dataplor_id",
+      "name": "name",
+      "latitude": "latitude",
+      "address": "address"
+    },
+    "file_type": "csv"
+  },
+  "output_path": {
+    "match_name": "data_match_process/20261110",
+    "container_name": "prospecting-data",
+    "path": "silver/ko/ar/andina"
+  },
+  "lang": "latin",
+  "execute_from": ""
+}

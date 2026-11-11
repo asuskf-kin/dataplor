@@ -1,5 +1,6 @@
 # config/settings.py
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -56,20 +57,33 @@ PRIORIZACION_SETTINGS = {
     **(config_data.get("priorizacion") or {}),
 }
 REPORT_SETTINGS = {
-    "carpeta": "reports",
     "nombre": "reporte_ejecutivo_{pais}_{canal}_{bottler}_{fecha}",
     **(config_data.get("reporte") or {}),
 }
 RAW_SETTINGS = {
     "container": "dataplorraw",
     "local_dir": "data/raw",
+    "front_container": "prospection-datacleaning",
     **(config_data.get("dataplor_raw") or {}),
 }
 DWH_SETTINGS = {
     "container": "prospecting-data",
-    "path_template": "{layer}/ko/{pais}/{bottler}/{fecha}",
+    "path_template": "{layer}/ko/{pais}/{bottler}/dataplor/{fecha}",
     "mirror_dir": "data",
     **(config_data.get("dwh") or {}),
+}
+BRAND_SETTINGS = {
+    # Skill brand-guidelines-kin: fonts, tokens and logos for every HTML deliverable
+    "assets_dir": ".claude/skills/brand-guidelines-kin/assets",
+    **(config_data.get("brand") or {}),
+}
+GOLD_PACKAGE_SETTINGS: dict[str, Any] = {
+    # Approved Golfo deck with the client removed (scripts/build_prospecting_deck_template.py)
+    "deck_template": "cleaning_agent/adapters/assets/prospecting_deck_template.pptx",
+    "client_label": "Coca-Cola {bottler}",
+    "contacts": [],
+    "client_columns": {},
+    **(config_data.get("gold_package") or {}),
 }
 AZURE_SETTINGS = {
     "container": "",

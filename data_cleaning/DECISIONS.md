@@ -51,3 +51,78 @@
 - **Lineage**: each stage records inputs/outputs (sha256, rows, bytes), code version and timestamps; the final
   `dataplor_pipeline_metadata.json` merges only this run's records.
 - **Pending (waiting for the user):** production warehouse paths for the Azure upload and the priorización step.
+
+## 2026-11-11 · Ciclo de Datamatch (Front <-> agente)
+
+- Cada paso: la persona corre Datamatch en el Front con un JSON (`paso1.json`, ...). El agente
+  baja el resultado y la base de clientes, toma como encontrados los clientes con
+  `total_score > 0.5` (`datamatch.step_cleanup_threshold`) y los quita de la base.
+- Salida por paso en `silver/ko/<pais>/<bottler>/data_match_process/qa_process/<fecha>/<paso>/`
+  (entidad data_match_process, no dataplor; <fecha> = día del primer paso del ciclo): base
+  reducida (`clients_bottler_<cliente>_<paso>.csv`), matches, el JSON del paso, un Excel
+  on-brand que explica el paso, y `_metadata.json` de cada archivo. Se sube solo con OK.
+- El bucle se repite (la base reducida es el default del siguiente paso) hasta que la persona
+  dice que ya; entonces sigue la prospección (QA thresholds, subida, priorización, linaje).
+- Excepción explícita a "solo columnas de coordenadas" de la base de clientes: para generar la
+  base reducida hay que copiar las filas completas (pedido del usuario). Se copian archivo a
+  archivo; al Excel y a los logs solo llegan conteos e identificadores, nunca nombres,
+  direcciones ni coordenadas, y del JSON se omite la persona a cargo.
+- En el resultado del Front, `.c` es la base de clientes (POS) y `.o` es Dataplor. El config del
+  QA_datamatch asume lo contrario (`id.c -> dataplor_id`): revisar antes del QA final.
+
+## 2026-11-11 · Prospectos en gold
+
+- Al cerrar el ciclo de Datamatch, el Dataplor limpio sin franquicias (silver) pierde los puntos
+  `id.o` que hicieron match en cualquier paso: ya son clientes del bottler. Lo que queda son los
+  prospectos, primer dato de gold, en `gold/ko/<pais>/<bottler>/prospecting-data/<fecha actual>/`
+  (`datamatch.prospects_template`), con `_metadata.json` + `_qa.html` y subida solo con OK.
+- Priorización toma por defecto ese CSV. Los pasos viejos de QA thresholds y subida final
+  salieron del grafo: el ciclo los reemplaza.
+
+## 2026-11-11 · Paquete gold de entrega (modelo Golfo)
+
+- Tras la priorización, el paso `stage_gold_package` arma en `gold/.../prospecting-data/<fecha>/`:
+  Excel de oportunidad + deck (.pptx) en la raíz, y `results_ko/` y `results_bottler/` con su CSV
+  y su mapa. Formato DWH (minúsculas, sin espacios) en lugar de "Results for KO/Bottler".
+- `prioridad` 1–6 = área (dentro = cliente actual a ≤300 m) × existencia, como Golfo. KO es anónima
+  (sin nombre, coordenadas ni cliente); BOTTLER lleva el cliente más cercano (`ref_<col>_cercano`).
+  Leer nombre y jefatura de la base de clientes es una excepción explícita (solo versión BOTTLER).
+- Mapas sin API (regla del usuario): canvas propio, sin tiles ni CDN. Deck: plantilla derivada del
+  deck aprobado de Golfo sin datos del cliente (`scripts/build_prospecting_deck_template.py`), con el
+  logo oficial (sin "Let knowledge in"). Las presentaciones para revisión van como Artifact (Slides).
+- La base de clientes de Andina trae latitud y longitud intercambiadas: el paquete lo detecta y lo
+  corrige para las distancias, y lo deja en alertas / POR VERIFICAR. El Datamatch del Front leyó las
+  mismas columnas: por eso solo 92 matches y `distance_score` siempre 0.
+
+## 2026-11-11 · Mapa de prospección: navegación
+
+- Elegir provincia o ciudad filtra y vuela a la selección (encuadre robusto: se ignora el 2% de puntos
+  extremos para que un punto mal geocodificado no aleje el mapa). Ciudad sin provincia elegida selecciona
+  su provincia. "Encuadrar resultados" y "Limpiar filtros" para cualquier filtro.
+- Dataplor escribe una misma provincia de varias formas ("Córdoba", "Provincia de Córdoba", "Cordoba",
+  "Santa Fe Province"): los selectores las agrupan en un nombre canónico (la grafía más frecuente). Los
+  CSV conservan el valor original.
+- A escala país las celdas H3 miden menos de un píxel: se dibuja una capa de densidad; los hexágonos al
+  acercarse; los puntos con zoom o cuando la selección tiene ≤ 6.000 puntos. Clic en un hexágono = vista de
+  barrio. Teclado (+ − 0 Esc) y pellizco táctil. Sigue sin ninguna API.
+
+## 2026-11-11 · Documentación para replicar
+
+- `docs/` (runbook, spec, dwh-paths, architecture) es la referencia para que otra persona corra el ciclo;
+  se actualiza en el mismo cambio que toca un paso, una regla o una ruta.
+
+## 2026-11-11 · Priorización desde los prospectos
+
+- Entrada: los prospectos de gold (datos limpios sin los clientes del Datamatch), base única
+  como Golfo (`dataplor_without_datamatch_area`). No hace falta el split por embotellador: los
+  prospectos ya son solo del territorio Andina.
+- Salidas en `bronze/ko/<pais>/<bottler>/providers/dataplor_on_premise_priority_<bottler>_<pais_nombre>/<fecha actual>/`
+  (`priorizacion.output_template`): `1_priority_<bottler>_<pais_nombre>_<AAAAMM>.csv` y el
+  entregable `dataplor_on_premise_priority_<bottler>_<pais_nombre>_<AAAAMM>.csv` (minúsculas).
+- No hay YAML de Argentina: los parámetros salen de `mexico_golfo.yaml`
+  (`priorizacion.base_config`) y las capas geográficas se cambian a las del país, que ya están en
+  `bronze/providers/dataplor/<region>/<pais>/WorldPop_Overpass/` (ubicación existente del repo
+  de priorización, compartida; este agente solo la lee).
+- Priorización escribe sus CSV en Azure al correr (la pregunta es la aprobación); después se
+  bajan al espejo local, pasan QA (filas paso 1 <= prospectos, paso 2 = paso 1, 7 columnas
+  geográficas) y se suben su `_metadata.json` + `_qa.html` con OK (los CSV se verifican por MD5).

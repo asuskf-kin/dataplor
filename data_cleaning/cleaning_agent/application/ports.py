@@ -13,10 +13,15 @@ import polars as pl
 from cleaning_agent.domain.lineage import ArtifactRef, StageRecord
 from cleaning_agent.domain.models import (
     DatamatchInputs,
+    DatamatchStepResult,
     ExecutiveReportOutcome,
+    GoldPackageRequest,
+    GoldPackageResult,
     OutputPaths,
     PrefilterResult,
     PriorizacionResult,
+    PriorizacionRun,
+    ProspectsResult,
     QAExploreResult,
     QARunResult,
     StepMetric,
@@ -68,16 +73,23 @@ class AuditPort(Protocol):
         self, audit_file: str | None, final_df: pl.DataFrame, items_to_track: list[str]
     ) -> None: ...
 
-    def html_report(self, metrics: list[StepMetric]) -> Path | None: ...
+    def html_report(self, metrics: list[StepMetric], out_dir: Path) -> Path | None: ...
 
 
 class DatamatchQAPort(Protocol):
     """QA of the Datamatch done in the Front (today: the QA_datamatch project)."""
 
-    def explore(self, inputs: DatamatchInputs, run_id: str) -> QAExploreResult: ...
+    def explore(
+        self, inputs: DatamatchInputs, run_id: str, output_dir: Path
+    ) -> QAExploreResult: ...
 
     def run(
-        self, inputs: DatamatchInputs, run_id: str, match: float, super_match: float
+        self,
+        inputs: DatamatchInputs,
+        run_id: str,
+        match: float,
+        super_match: float,
+        output_dir: Path,
     ) -> QARunResult: ...
 
 
@@ -86,7 +98,9 @@ class StoragePort(Protocol):
 
     def is_configured(self) -> bool: ...
 
-    def upload(self, files: list[str], container: str, prefix: str) -> UploadResult: ...
+    def upload(
+        self, files: list[str], container: str, prefix: str, replace: bool = False
+    ) -> UploadResult: ...
 
     def list_blobs(self, container: str, pattern: str) -> list[str]: ...
 
@@ -122,6 +136,8 @@ class ExecutiveReportPort(Protocol):
         bottler: str,
         premise: str,
         correlation_id: str,
+        out_dir: Path,
+        xlsx_dir: Path,
     ) -> ExecutiveReportOutcome: ...
 
 
@@ -131,14 +147,7 @@ class PriorizacionPort(Protocol):
     def list_configs(self) -> list[str]: ...
 
     def build_config(
-        self,
-        base_config: str,
-        input_blob: str,
-        container: str,
-        output_dir: str,
-        bottler: str,
-        country: str,
-        period: str,
+        self, base_config: str, run: PriorizacionRun
     ) -> dict[str, Any]: ...
 
     def run(self, config: dict[str, Any], run_id: str) -> PriorizacionResult: ...
@@ -149,11 +158,44 @@ class LayerStagingPort(Protocol):
 
     def count_rows(self, path: str) -> int: ...
 
+    def columns(self, path: str) -> list[str]: ...
+
     def mirror(self, source: str, target: Path) -> str: ...
+
+    def write_parquet(self, df: pl.DataFrame, target: Path) -> str: ...
+
+    def list_files(self, directory: Path) -> list[str]: ...
+
+    def copy(self, source: str, target_dir: Path) -> str: ...
 
     def write_sidecars(
         self, metadata: dict[str, Any], json_path: Path, html_path: Path
     ) -> list[str]: ...
+
+
+class DatamatchStepPort(Protocol):
+    """One step of the Datamatch loop: drop the matched clients, report, stage files."""
+
+    def run(
+        self,
+        inputs: DatamatchInputs,
+        out_dir: Path,
+        report_dir: Path,
+        folder: str,
+        threshold: float,
+        history: list[dict[str, Any]],
+        correlation_id: str,
+    ) -> DatamatchStepResult: ...
+
+    def build_prospects(
+        self, cleaned_file: str, match_files: list[str], target: Path
+    ) -> ProspectsResult: ...
+
+
+class GoldPackagePort(Protocol):
+    """Gold delivery package: KO / BOTTLER results, opportunity Excel, maps, deck."""
+
+    def build(self, request: GoldPackageRequest) -> GoldPackageResult: ...
 
 
 class PatternsPort(Protocol):

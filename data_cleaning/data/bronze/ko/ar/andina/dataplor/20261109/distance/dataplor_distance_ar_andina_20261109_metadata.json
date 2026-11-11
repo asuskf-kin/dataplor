@@ -1,0 +1,176 @@
+{
+  "origen": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+  "archivo": "dataplor_distance_ar_andina_20261109.parquet",
+  "fecha": "20261109",
+  "canal": "tradicional",
+  "analisis": "distance",
+  "#": {
+    "total": 3654510,
+    "utiles": 1245077
+  },
+  "% datos utiles": 34.07,
+  "por que se limpiaron": {
+    "Coordenadas inválidas o vacías": 5,
+    "No activo o no abierto (dataplor_status / open_closed_status)": 648390,
+    "Fuera del territorio (GeoJSON)": 1761038
+  },
+  "alertas": [],
+  "POR VERIFICAR": [],
+  "insumos": [
+    "prospection-datacleaning/global_geojson/Argentina_Andina.geojson"
+  ],
+  "capa": "bronze",
+  "destinos": [
+    "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109.parquet",
+    "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/distance/20261109/dataplor_distance_ar_andina_20261109.parquet"
+  ],
+  "espejo_local": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.parquet",
+  "pais": "ar",
+  "bottler": "andina",
+  "premise": "on_premise",
+  "proceso": "Pre-filtro por distancia (GeoJSON del territorio)",
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "code_version": "8c8dfe1-dirty",
+  "qa": {
+    "filas_leidas": 3654510,
+    "filas_conservadas": 1245077,
+    "filas_eliminadas": 2409433,
+    "pct_eliminado": 65.93,
+    "eliminadas_por_motivo": {
+      "Coordenadas inválidas o vacías": 5,
+      "No activo o no abierto (dataplor_status / open_closed_status)": 648390,
+      "Fuera del territorio (GeoJSON)": 1761038
+    },
+    "checks": [
+      {
+        "check": "Los conteos cuadran (leídos = eliminados + conservados)",
+        "ok": true,
+        "detail": "3,654,510 = 2,409,433 + 1,245,077"
+      },
+      {
+        "check": "Quedó al menos un registro",
+        "ok": true,
+        "detail": "1,245,077 conservados"
+      },
+      {
+        "check": "El archivo tiene las filas conservadas",
+        "ok": true,
+        "detail": "archivo 1,245,077 vs conservados 1,245,077"
+      }
+    ],
+    "qa_ok": true
+  },
+  "conteos": {
+    "dropped_by_status": 648390,
+    "rows_read": 3654510,
+    "invalid_coordinates": 5,
+    "inside_territory": 1245077,
+    "outside_territory": 1761038,
+    "in_polygon_overlap": 0
+  },
+  "linaje": [
+    {
+      "etapa": "fetch_raw",
+      "nombre": "Descarga del Dataplor raw",
+      "inicio": "2026-11-09T23:36:26+00:00",
+      "fin": "2026-11-09T23:51:53+00:00",
+      "entrada": [
+        {
+          "path": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet"
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": 1149025124,
+          "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "fetch_inputs",
+      "nombre": "Descarga de insumos (GeoJSON / clientes)",
+      "inicio": "2026-11-09T23:52:32+00:00",
+      "fin": "2026-11-09T23:52:33+00:00",
+      "entrada": [
+        {
+          "path": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson"
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": 2696,
+          "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "prefilter",
+      "nombre": "Pre-filtro geojson",
+      "inicio": "2026-11-10T00:51:11+00:00",
+      "fin": "2026-11-10T00:51:51+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+          "rows": null,
+          "bytes": 1149025124,
+          "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a",
+          "blob": null
+        },
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+          "rows": null,
+          "bytes": 2696,
+          "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_cleaned.csv",
+          "rows": 1245077,
+          "bytes": 1836000068,
+          "sha256": "fd0342e0586ae1e5fa3627f8c47ecb4988509d706cff07bd9a1a1ef154e00bfe",
+          "blob": null
+        }
+      ]
+    },
+    {
+      "etapa": "stage_bronze",
+      "nombre": "Bronze: espejo local + QA",
+      "inicio": "2026-11-10T00:51:52+00:00",
+      "fin": "2026-11-10T00:51:58+00:00",
+      "entrada": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_cleaned.csv",
+          "rows": null,
+          "bytes": 1836000068,
+          "sha256": "fd0342e0586ae1e5fa3627f8c47ecb4988509d706cff07bd9a1a1ef154e00bfe",
+          "blob": null
+        }
+      ],
+      "salida": [
+        {
+          "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\dataplor\\20261109\\distance\\dataplor_distance_ar_andina_20261109.csv",
+          "rows": 1245077,
+          "bytes": null,
+          "sha256": null,
+          "blob": "prospecting-data/bronze/ko/ar/andina/dataplor/20261109/distance/dataplor_distance_ar_andina_20261109.csv"
+        }
+      ]
+    }
+  ]
+}

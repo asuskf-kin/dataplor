@@ -7,7 +7,7 @@ checkpointer and the ``interrupt`` payloads must stay serialisable.
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import ClassVar, Self
+from typing import Any, ClassVar, Self
 
 from pydantic import (
     BaseModel,
@@ -269,8 +269,16 @@ class DatamatchInputs(_Answer):
     datamatch_file: str = Field(description="Matcher output downloaded from the Front")
     clients_file: str = Field(description="Bottler POS client base")
     client_name: str = Field(pattern=SAFE_NAME, description="Used in the QA file names")
+    # JSON of the Front step (parameters of that Datamatch run); its file name names
+    # the step folder in silver (paso1.json -> .../qa_process/<fecha>/paso1/)
+    step_json: str = Field("", description="Front JSON of this Datamatch step")
     # Filled from the run context, not asked again
     country: str = Field("", max_length=2)
+
+    @field_validator("step_json")
+    @classmethod
+    def _step_json(cls, value: str) -> str:
+        return _check_path(value, (".json",)) if value else value
 
     @field_validator("datamatch_file")
     @classmethod
@@ -301,8 +309,9 @@ class UploadDecision(_Answer):
 
     approved: bool
     container: str = Field("", max_length=63)
-    # Interim: replaced by the production warehouse layout once its paths are confirmed
     blob_prefix: str = Field("", max_length=MAX_PATH_LENGTH)
+    # Guideline: existing blobs are never replaced unless the person says so explicitly
+    replace: bool = False
     note: str | None = Field(None, max_length=MAX_NOTE_LENGTH)
 
     @model_validator(mode="after")
@@ -329,8 +338,35 @@ class QARunResult(BaseModel):
     output_dir: str
 
 
+class DatamatchStepResult(BaseModel):
+    """One Datamatch step: the reduced client base, the matches and the Excel report."""
+
+    files: list[str]
+    clients_file: str
+    summary: dict[str, Any]
+
+
+class ProspectsResult(BaseModel):
+    """Cleaned Dataplor minus the points the bottler already has as clients."""
+
+    file: str
+    known_ids: int
+    known_in_file: int
+    rows_in: int
+    rows_out: int
+
+
+class DatamatchLoopDecision(_Answer):
+    """After each step: run another Datamatch step, or the loop is done."""
+
+    done: bool
+    note: str | None = Field(None, max_length=MAX_NOTE_LENGTH)
+
+
 class UploadResult(BaseModel):
     uploaded: list[str]
+    # Already in the blob with the same size and MD5: not uploaded again (guideline)
+    skipped: list[str] = Field(default_factory=list)
 
 
 # --- Priorización ---------------------------------------------------------------------
@@ -342,12 +378,91 @@ class PriorizacionDecision(_Answer):
     period: str | None = Field(
         None, pattern=r"^20\d{2}(0[1-9]|1[0-2])$", description="AAAAMM"
     )
+    # Cleaned CSV in Azure (<container>/<blob>) and the folder for the outputs
+    input_blob: str | None = Field(None, max_length=MAX_PATH_LENGTH)
+    output_dir: str = Field("", max_length=MAX_PATH_LENGTH)
 
     @model_validator(mode="after")
     def _complete(self) -> Self:
         if self.run and (self.base_config is None or self.period is None):
             raise ValueError("base_config and period are required to run priorización")
         return self
+
+
+class PriorizacionRun(BaseModel):
+    """What a priorización run reads and writes (resolved before building its YAML)."""
+
+    input_blob: str
+    input_container: str
+    output_container: str
+    output_dir: str
+    step1_name: str
+    step2_name: str
+    geodata_prefix: str
+    run_name: str
+
+
+class ClientColumns(BaseModel):
+    """Columns of the bottler's client base the gold package reads."""
+
+    id: str = "pos_id"
+    latitude: str = "pos_latitude"
+    longitude: str = "pos_longitude"
+    city: str = "pos_city"
+    # Nearest-client columns of the BOTTLER version (ref_<column>_cercano)
+    reference: list[str] = Field(
+        default_factory=lambda: ["pos_id", "pos_gerencia", "pos_name", "pos_jefatura"]
+    )
+
+
+class GoldPackageRequest(BaseModel):
+    """One gold delivery package (KO / BOTTLER results, Excel, maps, deck)."""
+
+    scored_file: str
+    clients_file: str
+    territory_geojson: str = ""
+    out_dir: Path
+    bottler: str
+    bottler_label: str
+    # How the client is named on the deck (e.g. "Coca-Cola Andina")
+    client_label: str
+    country: str
+    country_name: str
+    country_label: str
+    period: str
+    period_label: str
+    clients_total: int
+    dataplor_total: int
+    matched: int
+    run_name: str
+    contacts: list[str] = Field(default_factory=list)
+    client_columns: ClientColumns = Field(default_factory=ClientColumns)
+
+    def names(self) -> dict[str, str]:
+        base = f"{self.bottler}_{self.country}_{self.period}"
+        return {
+            "xlsx": f"{self.bottler}_{self.country_name}_analisis_oportunidad_on_premise_{self.period}.xlsx",
+            "deck": f"prospecting_{self.bottler}_{self.country_name}_{self.period}.pptx",
+            "ko_csv": f"dataplor_on_premise_priority_{base}_ko.csv",
+            "bottler_csv": f"dataplor_on_premise_priority_{base}_bottler.csv",
+            "ko_map": f"prospection_map_{self.bottler}_ko.html",
+            "bottler_map": f"prospection_map_{self.bottler}_bottler.html",
+        }
+
+
+class GoldPackageResult(BaseModel):
+    root: list[str]
+    ko: list[str]
+    bottler: list[str]
+    rows: int
+    ko_rows: int
+    bottler_rows: int
+    ko_column_names: list[str]
+    bottler_columns: int
+    prioritized: int
+    # The client base had latitude/longitude in each other's column (fixed, flagged)
+    client_coordinates_swapped: bool = False
+    figures: dict[str, Any]
 
 
 class PriorizacionResult(BaseModel):
@@ -381,4 +496,26 @@ class PatternsDecision(_Answer):
     """OK to the created/updated country patterns (after seeing the diff)."""
 
     approved: bool
+    note: str | None = Field(None, max_length=MAX_NOTE_LENGTH)
+
+
+class FranchiseFlag(_Answer):
+    name: str = Field(min_length=1, max_length=200)
+    marca: str = Field(min_length=1, max_length=100)
+
+
+class FranchiseReview(_Answer):
+    """Claude Code's review: franchises still present (exact names) or a CSV with them."""
+
+    flagged: list[FranchiseFlag] = Field(default_factory=list, max_length=20_000)
+    flagged_file: str | None = None
+
+    @field_validator("flagged_file")
+    @classmethod
+    def _csv_file(cls, value: str | None) -> str | None:
+        return None if value is None else _check_path(value, (".csv",))
+
+
+class FranchiseDecision(_Answer):
+    remove: bool
     note: str | None = Field(None, max_length=MAX_NOTE_LENGTH)

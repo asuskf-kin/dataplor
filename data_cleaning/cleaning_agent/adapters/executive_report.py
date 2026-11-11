@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+from cleaning_agent.adapters.brand import KinBrand
 from cleaning_agent.adapters.executive_report_builder import generate_executive_report
 from cleaning_agent.adapters.filesystem import resolve
 from cleaning_agent.domain.models import ExecutiveReportOutcome
@@ -16,11 +17,15 @@ PREMISE_CHANNEL = {
 
 class FileExecutiveReport:
     def __init__(
-        self, project_root: Path, dropped_dir: Path, out_dir: Path, name_template: str
+        self,
+        project_root: Path,
+        dropped_dir: Path,
+        name_template: str,
+        brand: KinBrand,
     ) -> None:
         self.project_root = project_root
+        self.brand = brand
         self.dropped_dir = dropped_dir
-        self.out_dir = out_dir
         self.name_template = name_template
 
     def generate(
@@ -31,17 +36,21 @@ class FileExecutiveReport:
         bottler: str,
         premise: str,
         correlation_id: str,
+        out_dir: Path,
+        xlsx_dir: Path,
     ) -> ExecutiveReportOutcome:
         result = generate_executive_report(
             resolve(self.project_root, raw_csv),
             resolve(self.project_root, output_csv),
             self.dropped_dir,
-            self.out_dir,
+            out_dir,
             country=country,
             bottler=bottler,
             channel=PREMISE_CHANNEL.get(premise),
             name_template=self.name_template,
             correlation_id=correlation_id,
+            brand=self.brand,
+            xlsx_dir=xlsx_dir,
         )
         return ExecutiveReportOutcome(
             files=[str(f) for f in result.files], summary=result.summary

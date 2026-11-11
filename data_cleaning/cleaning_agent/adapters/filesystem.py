@@ -16,6 +16,7 @@ from cleaning_agent.adapters.audit_file import (
     init_audit_file,
     write_audit_step,
 )
+from cleaning_agent.adapters.brand import KinBrand
 from cleaning_agent.adapters.drop_report import generate_html_report
 from cleaning_agent.adapters.drop_tracker import save_dropped_records
 from cleaning_agent.domain.models import StepMetric
@@ -93,8 +94,9 @@ class FileSystemDatasets:
 
 
 class FileSystemAudit:
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, brand: KinBrand) -> None:
         self.data_dir = data_dir
+        self.brand = brand
 
     def start(self, items_to_track: list[str]) -> str | None:
         audit_file = init_audit_file(self.data_dir, items_to_track)
@@ -110,7 +112,7 @@ class FileSystemAudit:
         if audit_file:
             finalize_audit_report(Path(audit_file), final_df, items_to_track)
 
-    def html_report(self, metrics: list[StepMetric]) -> Path | None:
+    def html_report(self, metrics: list[StepMetric], out_dir: Path) -> Path | None:
         if not metrics:
             return None
         return generate_html_report(
@@ -123,5 +125,6 @@ class FileSystemAudit:
                 }
                 for metric in metrics
             ],
-            self.data_dir,
+            out_dir,
+            self.brand,
         )

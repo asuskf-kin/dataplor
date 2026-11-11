@@ -1,17 +1,24 @@
 """Tests for the executive report with synthetic data (never real client data)."""
 
+import io
 import logging
+import re
+import sys
+import types
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import pytest
+from matplotlib.backends.backend_agg import FigureCanvasAgg
+from matplotlib.figure import Figure
 from openpyxl import load_workbook
 
 from cleaning_agent.adapters.executive_report_builder import (
     ExecutiveReportResult,
     generate_executive_report,
 )
+from tests.test_brand import BRAND, assert_on_brand_html
 
 RUN_DATE = "20260101_000000"
 OUTPUT_NAME = "dataplor_final_pipeline_output_mx.csv"
@@ -327,3 +334,59 @@ def test_logs_carry_no_row_contents(
     assert all("[cid=cid-test]" in r.getMessage() for r in caplog.records)
     assert SECRET_NAME_PREFIX not in caplog.text
     assert "Marca Uno" not in caplog.text
+
+
+def test_html_report_is_on_brand(paths: dict[str, Path]) -> None:
+    html = next(f for f in _run(paths).files if f.suffix == ".html")
+    page = html.read_text(encoding="utf-8")
+
+    assert_on_brand_html(page)
+    assert page.count("data:image/svg+xml;base64") == 2  # header and footer logo
+    assert "Segoe UI" not in page and "system-ui,'Segoe" not in page
+
+
+def test_pdf_embeds_only_the_brand_fonts(paths: dict[str, Path]) -> None:
+    pdf = next(f for f in _run(paths).files if f.suffix == ".pdf").read_bytes()
+
+    fonts = {
+        name.split(b"+")[-1] for name in re.findall(rb"/BaseFont\s*/([\w+-]+)", pdf)
+    }
+    assert fonts, "the PDF must embed its fonts"
+    families = {name.split(b"-")[0] for name in fonts}
+    assert families == {b"SpaceGrotesk", b"AlbertSans"}
+    assert b"SpaceGrotesk-Bold" in fonts  # titles and numerals in a real bold weight
+
+
+def test_pdf_places_the_rasterised_logo_when_available(
+    paths: dict[str, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[int] = []
+
+    def svg2png(bytestring: bytes, output_width: int) -> bytes:
+        calls.append(output_width)
+        fig = Figure(figsize=(3, 0.6))
+        FigureCanvasAgg(fig)
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        return buf.getvalue()
+
+    monkeypatch.setitem(sys.modules, "cairosvg", types.SimpleNamespace(svg2png=svg2png))
+    pdf = next(f for f in _run(paths).files if f.suffix == ".pdf")
+
+    assert calls  # the approved SVG went through the rasteriser, nothing was drawn
+    assert b"/Subtype /Image" in pdf.read_bytes()
+
+
+def test_excel_header_uses_brand_tokens(paths: dict[str, Path]) -> None:
+    xlsx = next(f for f in _run(paths).files if f.suffix == ".xlsx")
+    header = load_workbook(xlsx)["Categorias"]["A1"]
+
+    assert header.fill.fgColor.rgb.endswith(BRAND.color("ka-color-gray-4").lstrip("#"))
+    assert header.font.color.rgb.endswith(BRAND.color("ka-color-white").lstrip("#"))
+    assert header.font.name == "Albert Sans"
+
+
+def test_explicit_brand_is_used(paths: dict[str, Path]) -> None:
+    result = _run(paths, brand=BRAND)
+    html = next(f for f in result.files if f.suffix == ".html")
+    assert BRAND.tokens_css in html.read_text(encoding="utf-8")

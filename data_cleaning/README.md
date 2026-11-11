@@ -38,81 +38,47 @@ You choose which modules run and in what order (see [Example code](#example-code
 
 ### Agentic flow (LangGraph + human-in-the-loop)
 
-The pipeline runs as a **LangGraph agent** (`cleaning_agent/`) that stops and asks a person at every decision.
-No notebook is involved. The first question is always:
-
-> **¿Vamos a limpiar los datos por...?** `geojson` (cruzar territorio) · `clientes_bottler` (cercanía a clientes) · `ninguno`
+The pipeline runs as a **LangGraph agent** (`cleaning_agent/`) that stops and asks a person at every
+decision and before every upload. Claude Code is the harness (`/limpiar-dataplor`); there are no LLM API
+calls in the code. One cycle, for one country and bottler:
 
 ```
-start -> choose_mode* -> collect_inputs* -> confirm_plan* --cancel--> END
-                                                |
-              geojson | clientes_bottler: prefilter    ninguno: (skip)
-                                                v
-                       load_input -> run_module (modules 0-6, one step each)
-                                                v
-                     finalize (audit + HTML report) -> approve_output* --reject--> END
-                                                v
-                              publish (paths.output_data) -> ¿Datamatch?* --no--+
-                                                | sí                            |
-                 Front (datamatch, in the Kin web app)* -> QA explore           |
-                       -> thresholds* -> QA run (QA_datamatch project) ---------+
-                                                                                v
-                                   confirm_upload* --keep local--> END
-                                                v
-                                   upload to Azure Blob Storage -> END
-* = interrupt: waits for the human. Invalid answers are re-asked (agent.max_input_attempts).
+intake* → ¿limpiar?* → pre-filter (GeoJSON / clients) → bronze* → Front (Dataplor)* → patterns*
+  → cleaning modules 1-6 → franchise review* → silver* (cleaned parquet + reports) → gold* (executive Excel)
+  → Datamatch loop* (Front step → drop matched clients → silver qa_process → again?)
+  → gold prospects* → priorización* (external repo) → gold delivery package* (KO / BOTTLER, Excel, maps, deck)
+  → lineage                                                  * = waits for the person
 ```
 
-After publishing locally, the agent asks whether to run **Datamatch**. Datamatch runs in the Front
-(`datamatch.front_url`, https://kin-analytics.web.app/home): the person uploads the cleaned CSV, runs it and
-gives the agent the downloaded file. The agent then runs the **QA** from the separate `QA_datamatch` project
-(`datamatch.qa_project_dir`, through `uv run --project`, so its config is never edited), asks for the
-`match` / `super_match` thresholds after you read its HTML report, and finally asks before uploading the
-deliverables to **Azure**. Azure credentials come only from `AZURE_STORAGE_ACCOUNT_URL` (recommended,
-Azure AD) or `AZURE_STORAGE_CONNECTION_STRING` (see `.env.example`).
+**Start here:**
 
-| Mode | What you provide | Pre-filter |
-|---|---|---|
-| `geojson` | Raw Dataplor `part-*.parquet` + territory `.geojson` | Active + open points inside the polygons (`cleaning_agent/adapters/streaming/territory.py`) |
-| `clientes_bottler` | Raw Dataplor `part-*.parquet` + bottler clients `.csv` (lat/lon columns) | Active + open points within `radius_m` of a client (`cleaning_agent/adapters/streaming/client_proximity.py`) |
-| `ninguno` | A Dataplor CSV already prepared | None |
-
-Both pre-filters stream the Parquet in batches (a ~10M-row export does not need to fit in RAM) and write
-`raw_csv`, which the modules (and `report.ipynb`) read as before. Defaults for each form come from the
-`territory_filter` / `client_filter` / `agent` sections of `config.yaml`.
+| Document | For |
+|---|---|
+| [docs/runbook.md](docs/runbook.md) | running a cycle: prerequisites, every question and what to answer, troubleshooting |
+| [docs/spec.md](docs/spec.md) | the rules: 46 steps, thresholds, QA checks, file contracts |
+| [docs/dwh-paths.md](docs/dwh-paths.md) | where every file lands in the warehouse |
+| [docs/architecture.md](docs/architecture.md) | changing the code |
+| [DECISIONS.md](DECISIONS.md) | why each rule exists |
 
 **How to run it**
 
-- In **Claude Code**: `/limpiar-dataplor` (`.claude/skills/limpiar-dataplor`). Claude runs the CLI, asks you each
-  question and sends your answer back. It never answers for you.
-- In a **terminal**: `uv run python -m cleaning_agent interactive`.
-- Step by step (machine-readable JSON on stdout):
+- In **Claude Code**: `/limpiar-dataplor`. Claude runs the CLI, asks you each question and sends your answer
+  back. It never answers for you.
+- In a **terminal** (JSON on stdout, logs on stderr):
   ```bash
   uv run python -m cleaning_agent start
-  uv run python -m cleaning_agent resume --thread <id> --answer '{"mode": "geojson"}'
+  uv run python -m cleaning_agent resume --thread <id> --answer '<json>'
   uv run python -m cleaning_agent status --thread <id>
+  uv run python -m cleaning_agent redo   --thread <id> --after <node>
   uv run python -m cleaning_agent graph   # Mermaid diagram
   ```
 
-Every run is a thread checkpointed in `data/checkpoints.sqlite`: you can close the terminal between questions and
-resume later. Intermediate steps are Parquet files in `data/runs/<thread>/`. The thread id is the run's
-Correlation ID and appears on every log line.
+Every run is a thread checkpointed in `data/checkpoints.sqlite`: close the terminal between questions and
+resume later. `data/runs/<thread>/PROGRESS.md` shows the status of every step. The thread id is the run's
+Correlation ID on every log line. Azure credentials come only from `AZURE_STORAGE_CONNECTION_STRING` or
+`AZURE_STORAGE_ACCOUNT_URL` (see `.env.example`).
 
-**Architecture (hexagonal)**
-
-```
-cleaning_agent/
-├── domain/      models.py (Pydantic contracts for every answer) · modules.py (module catalog + plan rules)
-├── ports.py     PrefilterPort · DatasetPort · AuditPort (Protocols)
-├── adapters/    prefilters.py (territory, client proximity) · filesystem.py (datasets, audit, HTML report)
-├── graph/       state.py · nodes.py · builder.py · studio.py (langgraph dev)
-├── wiring.py    composition root (binds ports to adapters and config.yaml)
-└── cli.py       start / resume / status / interactive / graph
-```
-
-The cleaning rules live in `cleaning_agent/domain/cleaning/` (pure Polars functions). Tests use in-memory fakes for the ports.
-
-Verification: `uv run pytest -q`
+Verification: `uv run pytest -q` · `uvx ruff check cleaning_agent tests` · strict mypy (command in `CLAUDE.md`).
 
 ---
 
@@ -202,7 +168,7 @@ The country, bottler, channel, premise and paths are **not** in the config: the 
 
 ```yaml
 reporte:
-  carpeta: "reports"
+  # no folder of its own: files go to the DWH mirror (see below)
   nombre: "reporte_ejecutivo_{pais}_{canal}_{bottler}_{fecha}"
 ```
 
@@ -283,13 +249,14 @@ After a full run you get:
 | `data/processed/0X_*.csv` | Snapshot of survivors after each step (if `save_tracking=True`). |
 | `data/dropped/0X_*.csv` | The rows each step **removed** (if `save_drops=True`), with the `drop_*` columns explaining why — see [Why was a record dropped?](#why-was-a-record-dropped). |
 | `data/audit/audit_report_<timestamp>.txt` | Per-name trace of where tracked items survived or were dropped (if `items_to_track` set). |
-| `reports/pipeline_report_<timestamp>.html` | Interactive bar chart of records removed per step + top-5 dropped names. |
-| `reports/<reporte.nombre>.html` / `.pdf` | **Executive summary** — retention headline, funnel, drop reasons, what triggered them, impact per category and region. Produced by [`report.ipynb`](report.ipynb): HTML self-contained for sharing, A4 PDF for printing. |
+| `data/silver/ko/<pais>/<bottler>/dataplor/<yyyymmdd>/pdv_<canal>_<premise>_<pais>_<bottler>_<yyyymmdd>.parquet` | Cleaned result (franchise review applied) + `_metadata.json` + `_qa.html`, validated before the silver upload. |
+| `data/silver/.../pipeline_report_<timestamp>.html` | Interactive bar chart of records removed per step + top-5 dropped names. |
+| `data/silver/.../<reporte.nombre>.html` / `.pdf` / `.xlsx` + channel CSV, each with `_metadata.json` | **Executive summary** — retention headline, funnel, drop reasons, what triggered them, impact per category and region. HTML self-contained for sharing, A4 PDF for printing. The Excel + its metadata are also copied to `data/gold/.../` (gold upload). There is no `reports/` folder. |
 
 ### Executive report
 
-Generated right after the cleaned CSV is published (`executive_report` node): HTML, PDF and Excel in
-`reporte.carpeta`, named with `reporte.nombre` ({pais}, {canal}, {bottler}, {fecha}). The channel comes from
+Generated right after the cleaned CSV is published (`executive_report` node): HTML, PDF and Excel in the
+silver mirror (the Excel is also copied to gold), named with `reporte.nombre` ({pais}, {canal}, {bottler}, {fecha}). The channel comes from
 the intake's premise (on premise / off premise / ambos = all). Code:
 `cleaning_agent/adapters/executive_report_builder.py` (port of the old `report.ipynb`, kept in `legacy/`).
 
@@ -321,12 +288,14 @@ data_cleaning/
 │   │   ├── ports.py            # Protocols the graph depends on
 │   │   ├── cleaning_catalog.py # modules + parameters for the run's country
 │   │   └── graph/              # state, nodes (intake → … → lineage), builder
-│   ├── adapters/               # filesystem, streaming pre-filters, executive/drop reports, QA, priorización,
-│   │                           # Azure, lineage
+│   ├── adapters/               # filesystem, streaming pre-filters, executive/drop reports, Datamatch loop,
+│   │                           # priorización, gold package (CSVs, Excel, offline map, deck), Azure, lineage
 │   ├── entrypoints/            # cli.py (start/resume/status/interactive/graph), studio.py
 │   ├── wiring.py               # composition root
 │   ├── settings.py             # reads config.yaml
 │   └── observability.py        # correlation-id logger
-├── tests/                      # pytest, in-memory fakes for every port
+├── docs/                       # runbook, spec, warehouse paths, architecture
+├── scripts/                    # build_prospecting_deck_template.py (approved deck -> template)
+├── tests/                      # pytest, in-memory fakes for every port, synthetic data only
 └── legacy/                     # old main.py and report.ipynb (reference only)
 ```

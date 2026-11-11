@@ -1,9 +1,13 @@
 ---
 name: marcar-franquicias
-description: Marca qué registros de la salida del pipeline Dataplor (México) son franquicias o cadenas —columna es_franquicia Sí/No + franquicia_marca en un <archivo>_v2.csv y un TXT con los nombres encontrados— y regenera el reporte ejecutivo (report.ipynb) descontando esas franquicias como "Borrados a mano", con el embotellador en el nombre del reporte. Úsala cuando pidan "revisa si es franquicia", "marca las franquicias", "crea el v2", "lista de nombres encontrados", "borrados a mano", "actualiza el reporte / el notebook" o "ahora con data/processed/mx/<embotellador>/...csv".
+description: LEGACY — proceso manual anterior al agente; para una corrida nueva usa /limpiar-dataplor (su paso franchise_review marca y elimina franquicias dentro del flujo). Esta skill solo sirve para rehacer a mano una salida vieja de México. Marca qué registros de la salida del pipeline Dataplor (México) son franquicias o cadenas —columna es_franquicia Sí/No + franquicia_marca en un <archivo>_v2.csv y un TXT con los nombres encontrados— y regenera el reporte ejecutivo (report.ipynb) descontando esas franquicias como "Borrados a mano", con el embotellador en el nombre del reporte. Úsala cuando pidan "revisa si es franquicia", "marca las franquicias", "crea el v2", "lista de nombres encontrados", "borrados a mano", "actualiza el reporte / el notebook" o "ahora con data/processed/mx/<embotellador>/...csv".
 ---
 
 # Marcar franquicias y actualizar el reporte ejecutivo
+
+> **Legacy.** El agente (`/limpiar-dataplor`) ya hace esto dentro del flujo: `franchise_review` (Claude marca
+> las franquicias), `confirm_franchises` (eliminar sí/no) y el reporte ejecutivo en silver. `report.ipynb`
+> vive en `legacy/`. Usa esta skill solo para rehacer a mano una salida antigua; ver `docs/runbook.md`.
 
 Proceso para un embotellador (`arca`, `bepensa`, `cdf`, `colima`, `femsa`, `nayar`, `rica`, …).
 Todo se corre **desde `data_cleaning/`** con el venv del proyecto. En Windows (Git Bash):

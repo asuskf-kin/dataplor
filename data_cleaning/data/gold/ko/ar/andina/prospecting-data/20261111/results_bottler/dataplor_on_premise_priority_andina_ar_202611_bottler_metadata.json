@@ -1,0 +1,74 @@
+{
+  "run_id": "dataplor-20261109-182659-d5b4",
+  "stage": "stage_gold_package",
+  "name": "Gold: paquete de entrega (KO, BOTTLER, Excel, mapas, deck)",
+  "started_at": "2026-11-11T21:23:23+00:00",
+  "finished_at": "2026-11-11T21:23:30+00:00",
+  "code_version": "8c8dfe1-dirty",
+  "inputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\bronze\\ko\\ar\\andina\\providers\\dataplor_on_premise_priority_andina_argentina\\20261111\\dataplor_on_premise_priority_andina_argentina_202611.csv",
+      "rows": null,
+      "bytes": 91405349,
+      "sha256": "af04e0a5b83054a331eefd21cf314f4cc2f69c781abbc9b02cb68246a64ef5fb",
+      "blob": null
+    }
+  ],
+  "outputs": [
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\andina_argentina_analisis_oportunidad_on_premise_202611.xlsx",
+      "rows": null,
+      "bytes": 93883,
+      "sha256": "bac7d9ca78120ed2bb7d092a53321a545be676580057a660ed9afe8f6543461c",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\prospecting_andina_argentina_202611.pptx",
+      "rows": null,
+      "bytes": 1541413,
+      "sha256": "dc129a910a89e3cb15cf37f032247d37715aa8fba17c959b073093a34a6b0b89",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\results_ko\\dataplor_on_premise_priority_andina_ar_202611_ko.csv",
+      "rows": null,
+      "bytes": 12207898,
+      "sha256": "18f3538f7889f263af64ec6b774faddd15e32e575b63a5075812493987ef5877",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\results_ko\\prospection_map_andina_ko.html",
+      "rows": null,
+      "bytes": 6538946,
+      "sha256": "63441580996552ea7aef927faa6ac37c3a07518262b172469585b837ee4e7747",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\results_bottler\\dataplor_on_premise_priority_andina_ar_202611_bottler.csv",
+      "rows": null,
+      "bytes": 98993469,
+      "sha256": "b941efcc6137aa0ca808cfef004bdfc1c0bbcbe06f4ece1ab78dc4b6b1b48d26",
+      "blob": null
+    },
+    {
+      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\results_bottler\\prospection_map_andina_bottler.html",
+      "rows": null,
+      "bytes": 9020164,
+      "sha256": "5bc89dacdd4522cca862df73995648a67d411114425727dff6f95261b9c80ba2",
+      "blob": null
+    }
+  ],
+  "metrics": {
+    "filas_leidas": 55895,
+    "filas_conservadas": 55895,
+    "filas_eliminadas": 0,
+    "pct_eliminado": 0.0,
+    "eliminadas_por_motivo": {},
+    "qa_ok": true
+  },
+  "archivo": {
+    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\gold\\ko\\ar\\andina\\prospecting-data\\20261111\\results_bottler\\dataplor_on_premise_priority_andina_ar_202611_bottler.csv",
+    "bytes": 98993469,
+    "sha256": "b941efcc6137aa0ca808cfef004bdfc1c0bbcbe06f4ece1ab78dc4b6b1b48d26"
+  }
+}
