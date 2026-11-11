@@ -16,7 +16,7 @@ Front and for priorización.
 |---|---|---|
 | `uv` (Python package manager) | `uv --version` | Installs the Python 3.12+ environment for you. |
 | This repo, dependencies installed | `uv sync` in `data_cleaning/` | Includes `h3` and `python-pptx` (gold package). |
-| `Priorizacion_On_Premise_code` next to this repo | `ls ../../Priorizacion_On_Premise_code` | Path set in `config.yaml` → `priorizacion.repo_dir`. Run `uv sync` inside it once. |
+| `Priorizacion_On_Premise` next to this repo | `ls ../../Priorizacion_On_Premise` | Path in `config.yaml` → `priorizacion.repo_dir`. Missing: `/limpiar-dataplor` clones it from `priorizacion.repo_url` (https://github.com/asuskf-kin/Priorizacion_On_Premise.git) and runs `uv sync` before the run starts. |
 | Azure credentials for **this** repo | `.env` with `AZURE_STORAGE_CONNECTION_STRING` (or `AZURE_STORAGE_ACCOUNT_URL` + `az login`) | Template: `.env.example`. Never commit `.env`; the agent never prints it. |
 | Azure credentials for **priorización** | its own `.env` (see its README) | Priorización reads and writes Azure itself. |
 | Access to the Kin Front | https://kin-analytics.web.app/home | You run two Front steps by hand: Dataplor cleaning and Datamatch. |
@@ -88,6 +88,9 @@ Every upload shows the files, the destination and the QA before anything leaves 
    point), writes the reduced base and the cycle Excel, and asks before uploading.
 4. Next step: upload the reduced base (`clients_bottler_<bottler>_pasoN.csv`, already in silver) to the
    Front as the client base and repeat. When no further step is needed, answer "done".
+5. No Datamatch this time: answer `{"skip": true}` at step 11. Priorización (step 15) then reads the
+   silver cleaned CSV, which still includes the bottler's current clients; steps 12–14 and the gold
+   package (17) do not run.
 
 ---
 

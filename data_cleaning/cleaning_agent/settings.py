@@ -52,7 +52,7 @@ DATAMATCH_SETTINGS = {
     **(config_data.get("datamatch") or {}),
 }
 PRIORIZACION_SETTINGS = {
-    "repo_dir": "../../Priorizacion_On_Premise_code",
+    "repo_dir": "../../Priorizacion_On_Premise",
     "timeout_s": 3600,
     **(config_data.get("priorizacion") or {}),
 }

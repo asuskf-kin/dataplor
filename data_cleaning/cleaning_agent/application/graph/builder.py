@@ -14,6 +14,11 @@ start -> intake* (país ISO 2, bottler, tradicional|moderno, off|on premise|ambo
            no: ------------------------------------------------------------------+
       -> confirm_upload* -> [upload] -> build_lineage -> END
 
+Datamatch is optional: answering {"skip": true} at front_datamatch goes straight to
+ask_priorizacion (input = the silver cleaned CSV) and, after priorización, to
+build_lineage (no gold package without the client base). With steps already done,
+skip behaves like "done" and goes to stage_prospects.
+
 * = human-in-the-loop interrupt. An invalid answer loops back to the same
 question up to ``max_attempts`` times, then the run is cancelled.
 Pending: priorización and the production warehouse layout for the upload.
@@ -173,6 +178,29 @@ def _after_datamatch_loop(max_attempts: int) -> Callable[[CleaningState], str]:
             return _retry_or_give_up(state, max_attempts)
         return "done" if state.get("datamatch_loop_done") else "iterate"
 
+    return route
+
+
+def _after_front_datamatch(max_attempts: int) -> Callable[[CleaningState], str]:
+    def route(state: CleaningState) -> str:
+        if state.get("errors"):
+            return _retry_or_give_up(state, max_attempts)
+        if not state.get("datamatch_skipped"):
+            return "fetch_datamatch"
+        # Steps already done still give prospects; with none, priorización reads the
+        # cleaned CSV directly (user, 2026-11-11)
+        return (
+            "stage_prospects" if state.get("datamatch_history") else "ask_priorizacion"
+        )
+
+    return route
+
+
+def _after_upload_priorizacion(state: CleaningState) -> str:
+    route = _after_layer_upload(state)
+    # The gold package needs the client base and matches of Datamatch
+    if route == "continue" and prioritization.without_prospects(state):
+        return "lineage"
     return route
 
 
@@ -412,9 +440,11 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     g.add_edge("executive_report", "confirm_silver")
     g.add_conditional_edges(
         "front_datamatch",
-        _after_answer("fetch_datamatch", deps.max_attempts),
+        _after_front_datamatch(deps.max_attempts),
         {
             "fetch_datamatch": "fetch_datamatch",
+            "stage_prospects": "stage_prospects",
+            "ask_priorizacion": "ask_priorizacion",
             "ask_again": "front_datamatch",
             "give_up": "give_up",
         },
@@ -516,9 +546,10 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     )
     g.add_conditional_edges(
         "upload_priorizacion",
-        _after_layer_upload_to("stage_gold_package"),
+        _after_upload_priorizacion,
         {
             "continue": "stage_gold_package",
+            "lineage": "build_lineage",
             "ask_again": "confirm_priorizacion",
             "failed": END,
         },

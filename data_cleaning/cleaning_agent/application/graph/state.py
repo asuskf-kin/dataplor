@@ -82,6 +82,8 @@ class CleaningState(TypedDict, total=False):
     # Datamatch loop: one summary per step (overwritten as a whole, keyed by step)
     datamatch_history: list[dict[str, object]]
     datamatch_loop_done: bool
+    # The person chose not to run Datamatch: no prospects file and no gold package
+    datamatch_skipped: bool
     qa_process_date: str
     # Front step after bronze: what the person gave back and its local mirror copies
     front: dict[str, object] | None

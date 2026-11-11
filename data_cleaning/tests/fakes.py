@@ -236,6 +236,8 @@ class FakeLineage:
 class FakeExecutiveReport:
     error: Exception | None = None
     with_xlsx: bool = False
+    # The real report also writes the channel CSV without franchises (silver)
+    with_csv: bool = False
     calls: list[tuple[str, ...]] = field(default_factory=list)
 
     def generate(
@@ -254,8 +256,13 @@ class FakeExecutiveReport:
         self.calls.append(
             (raw_csv, output_csv, country, bottler, premise, correlation_id)
         )
+        csv = out_dir / f"dataplor_{country}_{bottler}_sin_franquicias.csv"
+        if self.with_csv:
+            csv.parent.mkdir(parents=True, exist_ok=True)
+            csv.write_text("id,name\n1,a\n", encoding="utf-8")
         return ExecutiveReportOutcome(
-            files=[str(out_dir / f"reporte_{country}_{bottler}.html")]
+            files=([str(csv)] if self.with_csv else [])
+            + [str(out_dir / f"reporte_{country}_{bottler}.html")]
             + (
                 [str(xlsx_dir / f"reporte_{country}_{bottler}.xlsx")]
                 if self.with_xlsx

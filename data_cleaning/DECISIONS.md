@@ -126,3 +126,15 @@
 - Priorización escribe sus CSV en Azure al correr (la pregunta es la aprobación); después se
   bajan al espejo local, pasan QA (filas paso 1 <= prospectos, paso 2 = paso 1, 7 columnas
   geográficas) y se suben su `_metadata.json` + `_qa.html` con OK (los CSV se verifican por MD5).
+
+## 2026-11-11 · Datamatch opcional
+
+- Qué: en `front_datamatch`, `{"skip": true}` salta Datamatch. Sin pasos hechos va directo a
+  `ask_priorizacion` con el CSV limpio de silver (el del reporte ejecutivo, sin franquicias) como entrada,
+  y después de subir la priorización termina en `build_lineage`. Con pasos hechos, equivale a "ya estamos".
+- Por qué: la persona pidió priorizar Bolivia/Embol sin esperar el Datamatch del Front.
+- Costo: esa priorización incluye los clientes que el bottler ya tiene (no son prospectos) y no hay
+  paquete gold, porque necesita la base de clientes y los matches. La pregunta de priorización lo avisa en
+  `notes`.
+- La entrada sale de la ruta del espejo (`data/<blob>` = `prospecting-data/<blob>`), no de `uploaded`,
+  que solo guarda la última subida.

@@ -11,6 +11,16 @@ agente por su cuenta**: cada `interrupt` es una decisión del usuario.
 
 ## Protocolo
 
+0. **Preparar (antes de `start`)**: verifica que exista el repo de priorización en
+   `priorizacion.repo_dir` de `config.yaml` (hoy `../../Priorizacion_On_Premise`, junto a `dataplor`).
+   Si no existe, clónalo de `priorizacion.repo_url` y prepara su entorno:
+   ```bash
+   git clone https://github.com/asuskf-kin/Priorizacion_On_Premise.git ../../Priorizacion_On_Premise
+   uv sync --project ../../Priorizacion_On_Premise
+   ```
+   Dile al usuario que lo clonaste. Si el clon falla (sin acceso a GitHub), avísale y sigue: solo se
+   necesita en el paso de priorización. Las credenciales de Azure las toma del entorno de esta corrida.
+
 1. **Iniciar** (o reanudar si el usuario da un hilo):
    ```bash
    uv run python -m cleaning_agent start
@@ -38,7 +48,7 @@ agente por su cuenta**: cada `interrupt` es una decisión del usuario.
    | `franchise_review` | **Tú (Claude Code)** lees `candidates_file` (nombres + registros) y detectas franquicias que quedaron (OXXO, Costco, las más reconocidas del país). Muestra la lista al usuario | `{"flagged": [{"name": "<exacto>", "marca": "OXXO"}]}` o `{"flagged": []}` |
    | `confirm_franchises` | AskUserQuestion: marqué N registros (`by_brand`); ¿eliminarlos? (se marcan siempre; si se eliminan sale `_sin_franquicias.csv`) | `{"remove": true}` · `{"remove": false}` |
    | `confirm_layer_upload` (silver / gold / datamatch / prospectos / priorización / paquete gold) | **Acción hacia afuera.** Muestra `layer`, `files`, `destinations` y `extra_destinations` (archivos que van a subcarpetas: reporte del ciclo, `results_ko/`, `results_bottler/`), `qa` y `report_files`. Si `qa` trae alertas (p.ej. coordenadas de clientes intercambiadas), dilas. AskUserQuestion: subir / no subir | `{"approved": true, "replace": false}` · `{"approved": false}` · para reemplazar un blob existente solo si la persona lo pide: `"replace": true` |
-   | `front_datamatch` | **Ciclo de Datamatch.** Dale el link `front_url` y el archivo a subir; **la persona** corre Datamatch en el Front con el JSON del paso. Pide: ruta del resultado (`final_output.csv`; rutas `silver/…` se leen de `prospecting-data`), base de clientes (en pasos 2+ el default es la base reducida del paso anterior) y el JSON del paso (`pasoN.json`). No operes el Front | `{"datamatch_file": "silver/ko/ar/andina/<…>/final_output.csv", "clients_file": "drop_zone/ko/…/clientes.csv", "client_name": "andina", "step_json": "C:/…/paso1.json"}` |
+   | `front_datamatch` | **Ciclo de Datamatch.** Dale el link `front_url` y el archivo a subir; **la persona** corre Datamatch en el Front con el JSON del paso. Pide: ruta del resultado (`final_output.csv`; rutas `silver/…` se leen de `prospecting-data`), base de clientes (en pasos 2+ el default es la base reducida del paso anterior) y el JSON del paso (`pasoN.json`). No operes el Front. Si la persona no va a hacer Datamatch, manda `{"skip": true}`: salta a priorización con el CSV limpio de silver (incluye clientes conocidos) y no se arma el paquete gold | `{"skip": true}` · `{"datamatch_file": "silver/ko/ar/andina/<…>/final_output.csv", "clients_file": "drop_zone/ko/…/clientes.csv", "client_name": "andina", "step_json": "C:/…/paso1.json"}` |
    | `datamatch_loop` | Tras subir el paso: muestra `last_step` (clientes inicio / con match / restantes) y `new_clients_file` (la base reducida para el Front). AskUserQuestion: otro paso / ya estamos, seguimos con la prospección | `{"done": false}` (otro paso) · `{"done": true}` (sigue a prospectos gold, priorización y paquete gold) |
    | `ask_priorizacion` | **Acción hacia afuera** (priorización escribe sus CSV en Azure). Muestra `configs` y `defaults`: `base_config` (YAML del país o `mexico_golfo.yaml` como donante), `period` AAAAMM, `input_blob` (los prospectos gold), `output_dir` (`bronze/ko/<pais>/<bottler>/providers/dataplor_on_premise_priority_<bottler>_<pais>/<fecha>`). Si un path no cuadra con el DWH, avísalo antes | `{"run": true}` · `{"run": true, "base_config": "<yaml>"}` · `{"run": false}` |
 

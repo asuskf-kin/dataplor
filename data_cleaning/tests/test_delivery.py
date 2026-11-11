@@ -8,6 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from cleaning_agent.application.graph.builder import build_graph
 from cleaning_agent.application.graph.nodes import Dependencies
+from cleaning_agent.application.graph.warehouse_nodes import _cleaned_dataplor
 from cleaning_agent.entrypoints.cli import run_resume as cli_resume
 from tests.fakes import (
     CLIENTS_FILE,
@@ -360,3 +361,54 @@ def test_datamatch_loop_cleans_clients_per_step_until_the_person_says_done():
     assert len(deps.datamatch_steps.prospects[-1][1]) == 2  # matches of both steps
     state = app.get_state({"configurable": {"thread_id": "t1"}}).values
     assert [h["paso"] for h in state["datamatch_history"]] == ["paso1", "paso2"]
+
+
+def test_skipping_datamatch_goes_to_priorizacion_on_the_cleaned_csv():
+    storage = FakeStorage()
+    deps, *_ = make_deps(storage=storage)
+    deps.executive_report.with_csv = True
+    app = _to_front_datamatch(deps)
+    state = app.get_state({"configurable": {"thread_id": "t1"}}).values
+    cleaned = Path(_cleaned_dataplor(state)).name  # silver CSV of the executive report
+
+    asked = cli_resume(app, "t1", {"skip": True})
+
+    assert _kind(asked) == "ask_priorizacion"
+    steps = {s["step"]: s["status"] for s in asked["steps"]}
+    assert steps["fetch_datamatch"] != "done" and steps["stage_prospects"] != "done"
+    # No prospects: the input is the silver CSV of the executive report
+    assert asked["interrupt"]["defaults"]["input_blob"].endswith(cleaned)
+    assert "clientes" in asked["interrupt"]["notes"][0]
+
+    cli_resume(app, "t1", {"run": True})  # priorización -> its sidecars wait
+    done = cli_resume(app, "t1", {"approved": True})
+
+    steps = {s["step"]: s["status"] for s in done["steps"]}
+    assert steps["upload_priorizacion"] == steps["build_lineage"] == "done"
+    # The gold package needs the Datamatch client base: it is not built
+    assert steps["stage_gold_package"] != "done"
+    assert not deps.gold_package.requests
+
+
+def test_skip_after_a_datamatch_step_builds_the_prospects():
+    deps, *_ = make_deps()
+    app = _to_front_datamatch(deps)
+    cli_resume(app, "t1", {"datamatch_file": DATAMATCH_FILE})
+    cli_resume(app, "t1", {"approved": True})  # step 1 -> silver
+    again = cli_resume(app, "t1", {"done": False})
+    assert _kind(again) == "front_datamatch"
+
+    view = cli_resume(app, "t1", {"skip": True})
+
+    assert (
+        _kind(view) == "confirm_layer_upload" and view["interrupt"]["layer"] == "gold"
+    )
+    assert Path(view["interrupt"]["files"][0]).name.startswith("prospects_")
+
+
+def test_skip_must_be_true_to_skip_datamatch():
+    app = _to_front_datamatch(make_deps()[0])
+
+    view = cli_resume(app, "t1", {"skip": "no"})
+
+    assert _kind(view) == "front_datamatch" and view["interrupt"]["errors"]

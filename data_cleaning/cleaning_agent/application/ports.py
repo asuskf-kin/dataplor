@@ -142,7 +142,7 @@ class ExecutiveReportPort(Protocol):
 
 
 class PriorizacionPort(Protocol):
-    """On-premise prioritisation (today: the Priorizacion_On_Premise_code repo)."""
+    """On-premise prioritisation (today: the Priorizacion_On_Premise repo)."""
 
     def list_configs(self) -> list[str]: ...
 

@@ -53,7 +53,8 @@ def _bottler(state: CleaningState) -> str:
 
 def make_front_datamatch(deps: Dependencies) -> NodeFn:
     def front_datamatch(state: CleaningState) -> Update:
-        """HITL 6. Done when the Datamatch output from the Front and the client base exist."""
+        """HITL 6. Done when the Datamatch output from the Front and the client base exist,
+        or the person chose to skip Datamatch ({"skip": true})."""
         fields = DatamatchInputs.model_fields
         defaults = {
             "datamatch_file": "",
@@ -67,16 +68,23 @@ def make_front_datamatch(deps: Dependencies) -> NodeFn:
                 "kind": "front_datamatch",
                 "question": (
                     "Sube el CSV limpio al Front, corre Datamatch y descarga su resultado. "
-                    "Luego indica dónde quedó el archivo."
+                    "Luego indica dónde quedó el archivo. Si no vas a hacer Datamatch, "
+                    "responde skip_answer."
                 ),
                 "front_url": deps.front_url,
                 "file_to_upload": state.get("output_path"),
                 "default_container": deps.dwh_container,
                 "defaults": defaults,
                 "schema": DatamatchInputs.model_json_schema(),
+                "skip_answer": {"skip": True},
                 "errors": state.get("errors", []),
             }
         )
+        # Datamatch is optional (user, 2026-11-11): without it priorización runs on the
+        # cleaned CSV, which still holds the bottler's known clients
+        if isinstance(answer, dict) and answer.get("skip") is True:
+            _logger(state).warning("Datamatch skipped by the person")
+            return {"datamatch_skipped": True, **_ok()}
         if isinstance(answer, dict):
             answer = {**defaults, **answer, "country": state.get("country", "")}
         parsed = _validate(DatamatchInputs, answer)

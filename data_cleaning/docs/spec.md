@@ -73,13 +73,17 @@ close they are to current routes — and deliver it to the warehouse and to the 
 - Step outputs: reduced base (`clients_bottler_<bottler>_pasoN.csv`), matches, the JSON, and one cycle
   Excel for all steps (history, score bands, Front parameters, matches with identifiers only).
 - Check: base at start = matched + remaining. The loop ends only when the person says so.
+- Optional: `{"skip": true}` at `front_datamatch` skips Datamatch. With no step done, the flow goes
+  straight to priorización on the silver cleaned CSV (it still holds the bottler's known clients) and
+  ends with the lineage: no gold prospects and no gold package (they need the client base). After one
+  or more steps, skip works like "done".
 
 ### 4.4 Gold prospects
 - Prospects = cleaned Dataplor without franchises − every `id.o` matched in any step.
 - QA: input = known clients + prospects; every matched id is present in the cleaned file; ≥ 1 prospect.
 
 ### 4.5 Priorización (external repo)
-- Single source: the gold prospects. Parameters from `priorizacion.base_config` (`mexico_golfo.yaml`) when
+- Single source: the gold prospects (the silver cleaned CSV when Datamatch was skipped). Parameters from `priorizacion.base_config` (`mexico_golfo.yaml`) when
   the country has no YAML; geo layers switched to the country's (`bronze/providers/dataplor/<region>/<pais>/WorldPop_Overpass/`).
 - Step 1 = score (popularity, reviews, open confidence → `weighted_combined_score`,
   `probability_existence_cat` low < 0.40 ≤ moderate < 0.80 ≤ high). Step 2 = H3 hexagon, population,

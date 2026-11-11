@@ -1,7 +1,9 @@
 """Priorización (last step of the flow), run in its own project after the uploads.
 
     ask_priorizacion* -> run_priorizacion -> stage_priorizacion -> confirm* -> upload
-        -> build_lineage
+        -> stage_gold_package (with Datamatch) | build_lineage (Datamatch skipped)
+
+Input: the gold prospects, or the silver cleaned CSV when Datamatch was skipped.
 
 Priorización reads its input from Azure and writes its outputs to Azure itself,
 so the question is also the approval for those writes.
@@ -25,6 +27,7 @@ from cleaning_agent.application.graph.nodes import (
     record_stage,
 )
 from cleaning_agent.application.graph.state import CleaningState
+from cleaning_agent.application.graph.warehouse_nodes import _cleaned_dataplor
 from cleaning_agent.domain.lineage import ArtifactRef, now_iso
 from cleaning_agent.domain.models import (
     PriorizacionDecision,
@@ -71,9 +74,40 @@ def _output_dir(deps: Dependencies, state: CleaningState, today: str) -> str:
     return layer_prefix(Layer.BRONZE, country, bottler, today, template)
 
 
-def _default_input(state: CleaningState) -> str | None:
+def _default_input(deps: Dependencies, state: CleaningState) -> str | None:
+    if without_prospects(state):
+        return _cleaned_blob(deps, state)
     csvs = [u for u in state.get("uploaded") or [] if u.endswith(".csv")]
     return csvs[-1] if csvs else None
+
+
+def without_prospects(state: CleaningState) -> bool:
+    return bool(state.get("datamatch_skipped")) and not state.get("datamatch_history")
+
+
+def _cleaned_blob(deps: Dependencies, state: CleaningState) -> str | None:
+    """Blob of the silver CSV of the executive report (cleaned, no franchises).
+
+    "uploaded" only keeps the last upload (gold), so the blob comes from the mirror:
+    data/<blob> is the local copy of <dwh container>/<blob>."""
+    cleaned = Path(_cleaned_dataplor(state))
+    try:
+        blob = cleaned.relative_to(deps.mirror_root).as_posix()
+    except ValueError:
+        return None  # not in the mirror, so never uploaded: the person gives it
+    return f"{deps.dwh_container}/{blob}"
+
+
+def _notes(state: CleaningState) -> list[str]:
+    if without_prospects(state):
+        return [
+            (
+                "Sin Datamatch: la entrada es el CSV limpio, que todavía incluye los "
+                "clientes que el bottler ya tiene; después de la priorización no se arma "
+                "el paquete gold."
+            )
+        ]
+    return []
 
 
 def make_ask_priorizacion(deps: Dependencies) -> NodeFn:
@@ -86,7 +120,7 @@ def make_ask_priorizacion(deps: Dependencies) -> NodeFn:
             "run": True,
             "base_config": _guess_config(deps, configs, state.get("country", "")),
             "period": today[:6],
-            "input_blob": _default_input(state),
+            "input_blob": _default_input(deps, state),
             "output_dir": output_dir,
             **(state.get("priorizacion") or {}),
         }
@@ -99,6 +133,7 @@ def make_ask_priorizacion(deps: Dependencies) -> NodeFn:
                 ),
                 "configs": configs,
                 "defaults": defaults,
+                "notes": _notes(state),
                 "answer_format": {"run": True},
                 "errors": state.get("errors", []),
             }

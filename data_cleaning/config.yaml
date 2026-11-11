@@ -122,7 +122,9 @@ priorizacion:
   base_config: "mexico_golfo.yaml"
   # Salidas: {pais_nombre} = nombre del país en priorización (ar -> argentina)
   output_template: "{layer}/ko/{pais}/{bottler}/providers/dataplor_on_premise_priority_{bottler}_{pais_nombre}/{fecha}"
-  repo_dir: "../../Priorizacion_On_Premise_code"
+  repo_dir: "../../Priorizacion_On_Premise"
+  # Si repo_dir no existe, el harness lo clona de aquí al inicio de la corrida (skill limpiar-dataplor)
+  repo_url: "https://github.com/asuskf-kin/Priorizacion_On_Premise.git"
   timeout_s: 3600
 
 # Paquete gold de entrega (modelo: paquete aprobado de Golfo). Va en la carpeta gold de los

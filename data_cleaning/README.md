@@ -159,7 +159,7 @@ The country, bottler, channel, premise and paths are **not** in the config: the 
 | `territory_filter` / `client_filter` | defaults for the distancia / client bottler pre-filters |
 | `nightlife_filter` | module 0 parameters |
 | `datamatch` | Front URL, QA_datamatch project, client base, default thresholds |
-| `priorizacion` | Priorizacion_On_Premise_code project and timeout |
+| `priorizacion` | Priorizacion_On_Premise project and timeout |
 | `azure_storage` | container, timeouts, retries (credentials only via environment variables) |
 | `reporte` | executive report folder and file-name template |
 | `paths.data_dir` | local data folder |

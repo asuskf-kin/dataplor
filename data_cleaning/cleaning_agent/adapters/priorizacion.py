@@ -1,4 +1,4 @@
-"""PriorizacionPort adapter: runs Priorizacion_On_Premise_code through its CLI.
+"""PriorizacionPort adapter: runs Priorizacion_On_Premise through its CLI.
 
 That repo pins Python 3.12 and heavy geo dependencies (h3, rasterio), so it runs in
 its own environment (``uv run --project``) with cwd = its root, where its own
