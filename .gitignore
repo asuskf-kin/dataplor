@@ -231,3 +231,5 @@ data_cleaning/uv.lock
 # cleaning_agent: LangGraph checkpoints and per-run intermediate steps
 data_cleaning/data/checkpoints.sqlite*
 data_cleaning/data/runs/
+*.json
+*.xlsx#
