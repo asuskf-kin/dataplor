@@ -197,6 +197,10 @@ class GoldPackagePort(Protocol):
 
     def build(self, request: GoldPackageRequest) -> GoldPackageResult: ...
 
+    def build_maps(self, request: GoldPackageRequest) -> list[str]:
+        """Rewrite only the KO and BOTTLER maps of a package already built."""
+        ...
+
 
 class PatternsPort(Protocol):
     """Country chain-pattern files and when they were last updated."""

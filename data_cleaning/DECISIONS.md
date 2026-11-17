@@ -138,3 +138,37 @@
   `notes`.
 - La entrada sale de la ruta del espejo (`data/<blob>` = `prospecting-data/<blob>`), no de `uploaded`,
   que solo guarda la última subida.
+
+## 2026-11-17 · Mapa de prospección: mapa base gratuito y estilo kin-hexmap
+
+- Qué: el mapa se dibuja sobre las teselas de Esri World Light Gray (base bajo los hexágonos, nombres de
+  calles y lugares encima), con hexágonos H3 que cambian de resolución con el zoom (6 región, 7 ciudad,
+  8 barrio) y un tooltip por hexágono con lo que hay en Dataplor (prospectos, existencia, a ≤300 m de un
+  cliente, clientes actuales, score, categoría principal). Colores del lienzo según la skill kin-hexmap
+  del equipo: quintiles navy → teal → amarillo → naranja → rojo (opacidad .62), puntos rojo/azul/gris con
+  borde negro, fondo #eef0f2, tooltip oscuro. Panel lateral, fuentes y logo siguen Kin.
+- Por qué: la persona pidió mapas con calles como su referencia, colores de esa referencia solo en el mapa,
+  y una fuente gratuita ("sin API o que sea free"). Reemplaza "mapas sin API": las teselas son la única red;
+  sin internet los datos siguen funcionando sobre fondo gris.
+- Descartado: CARTO Voyager y Positron (el mapa base de kin-hexmap) responden "API key required"; calles
+  OSM embebidas (20+ MB por mapa); Esri World Topo con la paleta de la primera captura (reemplazado por la
+  skill). Volumen UC/mes y share/ejecución de kin-hexmap: no están en Dataplor.
+
+## 2026-11-17 · Mapa de prospección: score, resolución y leyenda
+
+- El mapa deja fuera los prospectos sin ciudad, sin provincia o con score 0 (Andina AR: 9.083 de 55.895);
+  los CSV del paquete los conservan. Los selectores y chips ya no muestran opciones vacías.
+- Resolución H3 a elección: Auto (6/7/8 según zoom) o fija en 6, 7, 8 o 9.
+- Color de hexágonos por score promedio (por defecto) o por n.º de prospectos; color de puntos por existencia
+  o por score. Leyenda flotante en el mapa con los rangos reales de cada quintil y el n.º de hexágonos; el
+  tooltip pone primero la métrica que colorea el hexágono, con su color.
+- Por qué: la persona pidió quitar los registros sin datos, elegir la resolución 6–9 y una leyenda que resalte
+  el score con su color, más una mejor experiencia (controles segmentados, interruptores, tooltip que no se sale).
+
+## 2026-11-17 · Comando `maps` (rehacer solo los mapas)
+
+- Qué: `uv run python -m cleaning_agent maps --thread <hilo> --gold-dir <carpeta del paquete>` lee la corrida del
+  checkpoint (`gold_request`) y llama a `GoldPackagePort.build_maps`, que reescribe solo los dos HTML de mapas.
+- Por qué: los mapas cambiaron varias veces después de subir el paquete de Andina; `redo` rehacía todo el paquete
+  (CSV, Excel, deck) y cambiaría archivos ya subidos. Con `maps` lo publicado conserva tamaño y MD5, y cualquier
+  persona puede rehacer los mapas sin esta sesión.

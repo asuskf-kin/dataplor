@@ -101,8 +101,14 @@ close they are to current routes — and deliver it to the warehouse and to the 
 - **BOTTLER CSV**: id, priority, every priorización column, nearest client, area, hexagons.
 - **Opportunity Excel**: Resumen_Ejecutivo (universe = prospects + current clients), Por_Ciudad,
   Por_Provincia.
-- **Maps** (KO and BOTTLER): one offline HTML; canvas + Web Mercator; density dots at country zoom, H3
-  hexagons closer in, points when zoomed or when the selection is small; province/city selectors (spellings
+- **Maps** (KO and BOTTLER): one HTML; canvas + Web Mercator over Esri World Light Gray tiles (the only
+  network use; data works offline); density dots at country zoom, H3 hexagons closer in at resolution 6
+  (region), 7 (city) or 8 (neighbourhood) by zoom, or a fixed 6/7/8/9 chosen in the sidebar; hexagons coloured
+  by average priorización score (default) or by number of prospects, points by existence or score, quintile
+  ranges in a floating legend; per-hexagon tooltip from the Dataplor columns; prospects without city,
+  province or a score above 0 are left out of the map only (CSVs keep them); `maps` CLI rebuilds only the maps
+  of a finished run (`GoldPackagePort.build_maps`), never the uploaded CSV/Excel/deck;
+  kin-hexmap palette (`MAP_PALETTE`: quintiles navy → teal → yellow → orange → red) in the canvas, Kin brand in the sidebar; points when zoomed or when the selection is small; province/city selectors (spellings
   grouped) fly to the selection; framing ignores the 2% outliers; KO shows no name of any point or client.
 - **Deck** (.pptx): `cleaning_agent/adapters/assets/prospecting_deck_template.pptx` filled by shape id.
 - **Client coordinates swapped** (latitude in the longitude column): detected against the prospects'

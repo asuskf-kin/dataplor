@@ -7,7 +7,7 @@ maps and deck). Inputs are local files of the DWH mirror:
 - the bottler's client base, read only for the columns the BOTTLER version needs
   (id, name, region, jefatura, city and coordinates): its rows never reach a log,
   the KO files or the Excel, which only carry counts;
-- the Andina territory GeoJSON (outline of the offline map, optional).
+- the Andina territory GeoJSON (territory of the maps, optional).
 """
 
 import json
@@ -156,7 +156,10 @@ class FileGoldPackage:
         )
 
     # --- build ---------------------------------------------------------------------
-    def build(self, request: GoldPackageRequest) -> GoldPackageResult:
+    def _prepare(
+        self, request: GoldPackageRequest
+    ) -> tuple[pl.DataFrame, pl.DataFrame, bool, pl.DataFrame]:
+        """Scored prospects, clients, swapped flag and prospects with priority + hexes."""
         scored = pl.read_csv(
             resolve(self.project_root, request.scored_file), infer_schema=False
         )
@@ -173,11 +176,16 @@ class FileGoldPackage:
         if missing:
             raise GoldPackageError(f"scored prospects have no column(s) {missing}")
         clients, swapped = self._clients(request, scored)
-        reference = request.client_columns.reference
-        ref_cols = [f"ref_{c}_cercano" for c in reference]
         prospects = with_priority(
-            self._hexes(self._nearest_client(scored, clients, reference))
+            self._hexes(
+                self._nearest_client(scored, clients, request.client_columns.reference)
+            )
         )
+        return scored, clients, swapped, prospects
+
+    def build(self, request: GoldPackageRequest) -> GoldPackageResult:
+        scored, clients, swapped, prospects = self._prepare(request)
+        ref_cols = [f"ref_{c}_cercano" for c in request.client_columns.reference]
 
         out = request.out_dir
         names = request.names()
@@ -204,29 +212,7 @@ class FileGoldPackage:
         xlsx = out / names["xlsx"]
         _write_opportunity_xlsx(xlsx, self.brand, request, summary, by_city, by_state)
 
-        territory = (
-            _territory(resolve(self.project_root, request.territory_geojson))
-            if request.territory_geojson
-            else []
-        )
-        ko_map = ko_dir / names["ko_map"]
-        bottler_map = bottler_dir / names["bottler_map"]
-        title = (
-            f"Prospección digital — {request.bottler_label} ({request.country_label})"
-        )
-        for target, audience in ((ko_map, "ko"), (bottler_map, "bottler")):
-            target.write_text(
-                render_map(
-                    prospects,
-                    clients,
-                    territory,
-                    self.brand,
-                    title,
-                    audience,
-                    request.client_columns,
-                ),
-                encoding="utf-8",
-            )
+        ko_map, bottler_map = self._write_maps(request, prospects, clients)
 
         figures = deck_figures(
             prospects, request.clients_total, request.dataplor_total, request.matched
@@ -260,6 +246,51 @@ class FileGoldPackage:
             client_coordinates_swapped=swapped,
             figures=figures,
         )
+
+    def _write_maps(
+        self,
+        request: GoldPackageRequest,
+        prospects: pl.DataFrame,
+        clients: pl.DataFrame,
+    ) -> tuple[Path, Path]:
+        """KO map (no names) and BOTTLER map (names) under results_ko/ and results_bottler/."""
+        names = request.names()
+        ko_map = request.out_dir / "results_ko" / names["ko_map"]
+        bottler_map = request.out_dir / "results_bottler" / names["bottler_map"]
+        territory = (
+            _territory(resolve(self.project_root, request.territory_geojson))
+            if request.territory_geojson
+            else []
+        )
+        title = (
+            f"Prospección digital — {request.bottler_label} ({request.country_label})"
+        )
+        for target, audience in ((ko_map, "ko"), (bottler_map, "bottler")):
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(
+                render_map(
+                    prospects,
+                    clients,
+                    territory,
+                    self.brand,
+                    title,
+                    audience,
+                    request.client_columns,
+                ),
+                encoding="utf-8",
+            )
+        return ko_map, bottler_map
+
+    def build_maps(self, request: GoldPackageRequest) -> list[str]:
+        """Only the two maps of an existing package (after a map change).
+
+        The CSVs, Excel and deck are not touched, so files already uploaded keep
+        their size and MD5. The client base is read the same way as in build().
+        """
+        _, clients, _, prospects = self._prepare(request)
+        ko_map, bottler_map = self._write_maps(request, prospects, clients)
+        logger.info("Maps rebuilt for %s in %s", request.run_name, request.out_dir)
+        return [str(ko_map), str(bottler_map)]
 
 
 def _territory(path: Path) -> list[list[list[float]]]:

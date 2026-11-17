@@ -1,5 +1,6 @@
 """Gold delivery package: real adapter on synthetic data (no production data)."""
 
+import json
 import re
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from pptx import Presentation
 
 from cleaning_agent.adapters.brand import BUNDLED_ASSETS_DIR, KinBrand
 from cleaning_agent.adapters.gold_package import FileGoldPackage, GoldPackageError
+from cleaning_agent.adapters.prospection_map import map_prospects
 from cleaning_agent.domain.gold_package import (
     KO_COLUMNS,
     canonical_names,
@@ -171,8 +173,20 @@ def test_package_has_ko_bottler_excel_maps_and_deck(
         encoding="utf-8"
     )
     for page in (ko_map, bottler_map):
-        assert not re.search(r"https?://", page), "the map must not call any URL / API"
+        # The Esri basemap tiles are the only network use: no CDN, no other API
+        tile_host = "https://server.arcgisonline.com/ArcGIS/rest/services/"
+        urls = re.findall(r"https?://", page)
+        assert urls and page.count(tile_host) == len(urls), "only the basemap tiles"
+        assert "OpenStreetMap" in page and "Esri" in page  # attribution required
         assert "<canvas" in page and "--ka-color-yellow" in page
+        # One H3 grid per zoom band: region, city, neighbourhood
+        data = json.loads(
+            page.split("<script>const D=", 1)[1]
+            .split(";const P=", 1)[0]
+            .replace(r"<\/", "</")
+        )
+        assert [g["r"] for g in data["res"]] == [6, 7, 8, 9]
+        assert all(len(g["hex"]) == 40 and len(g["clients"]) == 2 for g in data["res"])
     assert "Negocio Ficticio" not in ko_map and "Cliente Ficticio" not in ko_map
     assert "Negocio Ficticio" in bottler_map and "Cliente Ficticio 1" in bottler_map
 
@@ -235,3 +249,40 @@ def test_client_base_without_the_configured_columns_stops(
 
     with pytest.raises(GoldPackageError, match="pos_jefatura"):
         FileGoldPackage(tmp_path, BRAND, TEMPLATE).build(request_)
+
+
+def test_map_leaves_out_prospects_without_place_or_score():
+    frame = pl.DataFrame(
+        {
+            "city": ["Ciudad A", "", None, "Ciudad B", "Ciudad C"],
+            "state": ["Provincia X", "Provincia X", "Provincia X", None, "Provincia X"],
+            "weighted_combined_score": ["0.5", "0.5", "0.5", "0.5", "0"],
+        }
+    )
+    kept = map_prospects(frame)
+    # Only the first row has city, province and a score above 0
+    assert kept.get_column("city").to_list() == ["Ciudad A"]
+
+
+def test_build_maps_rewrites_only_the_maps(
+    tmp_path: Path, request_: GoldPackageRequest
+):
+    package = FileGoldPackage(tmp_path, BRAND, TEMPLATE)
+    package.build(request_)
+    out, names = request_.out_dir, request_.names()
+    untouched = [
+        out / names["xlsx"],
+        out / names["deck"],
+        out / "results_ko" / names["ko_csv"],
+        out / "results_bottler" / names["bottler_csv"],
+    ]
+    before = {p: p.read_bytes() for p in untouched}
+    ko_map = out / "results_ko" / names["ko_map"]
+    ko_map.write_text("old map", encoding="utf-8")
+
+    maps = package.build_maps(request_)
+
+    assert maps == [str(ko_map), str(out / "results_bottler" / names["bottler_map"])]
+    assert "<canvas" in ko_map.read_text(encoding="utf-8")
+    # Files already uploaded keep their bytes (size + MD5)
+    assert all(p.read_bytes() == before[p] for p in untouched)

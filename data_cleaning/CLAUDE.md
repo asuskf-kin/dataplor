@@ -3,7 +3,7 @@
 Agentic flow with human-in-the-loop: LangGraph + Pydantic, clean/hexagonal architecture. No notebooks.
 Claude Code is the harness (skill `/limpiar-dataplor`); there are no Claude API calls in the code.
 One cycle: intake → bronze → Front → cleaning → franchises → silver → Datamatch loop → gold prospects →
-priorización → gold delivery package (KO / BOTTLER, Excel, offline maps, deck) → lineage.
+priorización → gold delivery package (KO / BOTTLER, Excel, maps, deck) → lineage.
 
 Docs: `docs/runbook.md` (operator), `docs/spec.md` (rules), `docs/dwh-paths.md` (every path),
 `docs/architecture.md` (code). Keep them in sync when a step, rule or path changes.
@@ -12,7 +12,8 @@ Docs: `docs/runbook.md` (operator), `docs/spec.md` (rules), `docs/dwh-paths.md` 
 
 - With a human deciding: skill `/limpiar-dataplor`. First questions, in order: país ISO 2, bottler,
   tradicional/moderno, off/on premise/ambos, Dataplor raw path; then "¿Va a limpiar el Dataplor?".
-- CLI: `uv run python -m cleaning_agent start|resume|status|redo|interactive|graph` (JSON on stdout, logs on stderr).
+- CLI: `uv run python -m cleaning_agent start|resume|status|redo|interactive|graph|maps` (JSON on stdout, logs on stderr).
+  `maps --thread <id> --gold-dir <package folder>` rebuilds only the two maps of a finished run (CSV/Excel/deck untouched).
 
 ## Verify (definition of done)
 
@@ -32,7 +33,7 @@ cleaning_agent/
   application/   ports.py (Protocols), cleaning_catalog.py (modules per country),
                  graph/ (state, nodes per phase, builder, progress)
   adapters/      filesystem, streaming/ (territory, client proximity), executive report, drop report/audit,
-                 datamatch_steps, priorizacion, gold_package, prospection_map (offline), prospecting_deck,
+                 datamatch_steps, priorizacion, gold_package, prospection_map (Esri tiles), prospecting_deck,
                  azure_storage, layer_staging, lineage, brand / xlsx_brand, assets/ (deck template)
   entrypoints/   cli.py, studio.py (langgraph dev)
   wiring.py      composition root: binds ports to adapters + config.yaml
@@ -60,6 +61,8 @@ legacy/          old main.py and report.ipynb, reference only (not run)
   If a path the user gives does not match the DWH, say so and propose the fix before using it.
 - Client CSVs are personal/commercial data: steps read only the columns they need (coordinates; id, name,
   region and jefatura of the nearest client for the BOTTLER version only); never print their rows.
-- Maps never call an API (no tiles, no CDN). Review decks are Slides Artifacts on "Kin Design System - Kin
-  Official". Every deliverable follows the `brand-guidelines-kin` skill; never "Let knowledge in".
+- Maps: the only network use is the free Esri World Light Gray basemap tiles (no key, no library, no CDN);
+  the map canvas uses the kin-hexmap palette in `prospection_map.MAP_PALETTE`, not brand colours (user
+  decision 2026-11-17). Review decks are Slides Artifacts on "Kin Design System - Kin Official". Every other
+  deliverable (and the map sidebar) follows the `brand-guidelines-kin` skill; never "Let knowledge in".
 - No `type: ignore` (org policy): type the code instead.

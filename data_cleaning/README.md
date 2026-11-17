@@ -71,6 +71,8 @@ intake* → ¿limpiar?* → pre-filter (GeoJSON / clients) → bronze* → Front
   uv run python -m cleaning_agent status --thread <id>
   uv run python -m cleaning_agent redo   --thread <id> --after <node>
   uv run python -m cleaning_agent graph   # Mermaid diagram
+  uv run python -m cleaning_agent maps    --thread <id> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>
+                                          # rebuild only the maps of a finished run (after a map change)
   ```
 
 Every run is a thread checkpointed in `data/checkpoints.sqlite`: close the terminal between questions and
@@ -289,7 +291,7 @@ data_cleaning/
 │   │   ├── cleaning_catalog.py # modules + parameters for the run's country
 │   │   └── graph/              # state, nodes (intake → … → lineage), builder
 │   ├── adapters/               # filesystem, streaming pre-filters, executive/drop reports, Datamatch loop,
-│   │                           # priorización, gold package (CSVs, Excel, offline map, deck), Azure, lineage
+│   │                           # priorización, gold package (CSVs, Excel, map, deck), Azure, lineage
 │   ├── entrypoints/            # cli.py (start/resume/status/interactive/graph), studio.py
 │   ├── wiring.py               # composition root
 │   ├── settings.py             # reads config.yaml
