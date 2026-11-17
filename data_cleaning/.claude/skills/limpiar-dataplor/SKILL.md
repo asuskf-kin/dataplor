@@ -92,8 +92,9 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
   `_` en vez de `/`, fecha antes de la entidad), avísale y propón la corregida antes de usarla.
 - Mapas: la única red es el mapa base gratuito Esri World Light Gray (sin clave, sin librerías ni CDN; nunca un
   proveedor que pida API key, CARTO ya la pide). Colores del lienzo = paleta kin-hexmap (`MAP_PALETTE` en
-  `adapters/prospection_map.py`), solo en el mapa; el panel lateral sigue la marca Kin. Hexágonos H3 Auto (6/7/8
-  según zoom) o fijos 6/7/8/9, color por score promedio (o n.º de prospectos), puntos por existencia o score,
+  `adapters/prospection_map.py`), solo en el mapa; el panel lateral sigue la marca Kin. Hexágonos H3 Auto (7/8/9
+  según zoom) o fijos 7/8/9; **KO = solo hexágonos** (sin lat/lon de prospectos ni clientes, sin conteo de
+  clientes), Bottler con puntos y clientes; color por score promedio (o n.º de prospectos), puntos por existencia o score,
   leyenda flotante con rangos reales. Sin ciudad, provincia o score > 0 no se dibujan (los CSV los conservan).
 - Si cambia el código del mapa y la persona quiere los mapas nuevos de una corrida ya hecha:
   `uv run python -m cleaning_agent maps --thread <hilo> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`

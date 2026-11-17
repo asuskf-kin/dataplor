@@ -172,7 +172,8 @@ def test_package_has_ko_bottler_excel_maps_and_deck(
     bottler_map = (out / "results_bottler" / request_.names()["bottler_map"]).read_text(
         encoding="utf-8"
     )
-    for page in (ko_map, bottler_map):
+    payloads = {}
+    for name, page in (("ko", ko_map), ("bottler", bottler_map)):
         # The Esri basemap tiles are the only network use: no CDN, no other API
         tile_host = "https://server.arcgisonline.com/ArcGIS/rest/services/"
         urls = re.findall(r"https?://", page)
@@ -185,8 +186,15 @@ def test_package_has_ko_bottler_excel_maps_and_deck(
             .split(";const P=", 1)[0]
             .replace(r"<\/", "</")
         )
-        assert [g["r"] for g in data["res"]] == [6, 7, 8, 9]
-        assert all(len(g["hex"]) == 40 and len(g["clients"]) == 2 for g in data["res"])
+        assert [g["r"] for g in data["res"]] == [7, 8, 9]
+        assert all(len(g["hex"]) == 40 for g in data["res"])
+        payloads[name] = data
+    # KO is hexagons only: no coordinate of a prospect or a client, no client count
+    ko, bottler = payloads["ko"], payloads["bottler"]
+    assert ko["ko"] and not (ko["lat"] or ko["lon"] or ko["cLat"] or ko["cLon"])
+    assert all(g["clients"] == [] for g in ko["res"])
+    assert len(bottler["lat"]) == 40 and len(bottler["cLat"]) == 2
+    assert all(len(g["clients"]) == 2 for g in bottler["res"])
     assert "Negocio Ficticio" not in ko_map and "Cliente Ficticio" not in ko_map
     assert "Negocio Ficticio" in bottler_map and "Cliente Ficticio 1" in bottler_map
 

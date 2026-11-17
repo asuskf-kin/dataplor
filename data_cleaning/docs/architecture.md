@@ -30,7 +30,7 @@ cleaning_agent/
     datamatch_steps.py   loop step files + cycle Excel
     gold_package.py      KO/BOTTLER CSVs, opportunity Excel; calls the map and deck renderers;
                          build_maps() rewrites only the two maps of an existing package
-    prospection_map.py   canvas map on Esri Light Gray tiles; H3 res 6/7/8 by zoom, kin-hexmap palette
+    prospection_map.py   canvas map on Esri Light Gray tiles; H3 res 7/8/9, kin-hexmap palette; KO = hexagons only
     prospecting_deck.py  .pptx renderer (template by shape id)
     priorizacion.py      priorización repo as a subprocess (own venv, own .env)
     brand.py · xlsx_brand.py   Kin brand for HTML, matplotlib and Excel

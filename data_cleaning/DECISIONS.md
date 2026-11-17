@@ -172,3 +172,11 @@
 - Por qué: los mapas cambiaron varias veces después de subir el paquete de Andina; `redo` rehacía todo el paquete
   (CSV, Excel, deck) y cambiaría archivos ya subidos. Con `maps` lo publicado conserva tamaño y MD5, y cualquier
   persona puede rehacer los mapas sin esta sesión.
+
+## 2026-11-17 · Mapa KO solo hexágonos; resoluciones 7/8/9
+
+- Qué: el mapa KO ya no lleva latitud/longitud de prospectos ni de clientes, ni conteo de clientes por hexágono:
+  solo hexágonos (los ids H3 ya son columnas del CSV KO; el encuadre usa el centro de la celda res 9). El mapa
+  Bottler mantiene puntos y clientes. Resoluciones H3 del mapa: 7, 8 y 9 (Auto: 7 región, 8 ciudad, 9 barrio).
+- Por qué: KO es anónimo igual que su CSV (sin nombre, coordenadas ni cliente); el mapa KO anterior embebía
+  coordenadas. La persona fijó las resoluciones en 7, 8 y 9.
