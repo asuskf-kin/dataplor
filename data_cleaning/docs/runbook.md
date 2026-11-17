@@ -44,6 +44,7 @@ uv run python -m cleaning_agent start
 uv run python -m cleaning_agent status  --thread <thread_id>
 uv run python -m cleaning_agent resume  --thread <thread_id> --answer '<json>'
 uv run python -m cleaning_agent redo    --thread <thread_id> --after <node>   # rerun from a step
+uv run python -m cleaning_agent maps    --thread <thread_id> --gold-dir <gold package folder>   # rebuild only the maps
 ```
 
 Every run is a thread saved in `data/checkpoints.sqlite`: close the terminal between questions and resume
@@ -99,6 +100,17 @@ Every upload shows the files, the destination and the QA before anything leaves 
 - **Presentation**: build/refresh the deck as a Slides Artifact on the "Kin Design System - Kin Official"
   (Claude does it from the gold figures); the .pptx in gold is the agent's own render.
 - **Share**: Artifacts are private until shared from their Share menu.
+- **Maps**: open `results_ko/prospection_map_<bottler>_ko.html` and `results_bottler/…_bottler.html` in a
+  browser with internet (the basemap tiles are the only network use). In the sidebar: **Vista** (hexagon colour by
+  average score or n.º de prospectos, points by existence or score, H3 resolution Auto/6/7/8/9), **Ubicación**,
+  **Filtros**, **Capas**. The floating legend shows the real quintile ranges of what is on screen; hover a hexagon
+  for its tooltip, click to zoom one level. Prospects without city, province or a score above 0 are not drawn
+  (the subtitle says how many); the CSVs keep them.
+- **Rebuild the maps after a map change** (code in `cleaning_agent/adapters/prospection_map.py`), without
+  rerunning the package: `uv run python -m cleaning_agent maps --thread <thread_id> --gold-dir
+  data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`. Only the two map HTMLs change; CSV, Excel and deck keep
+  their bytes. Files already in Azure are not replaced (no re-upload rule): publishing the new maps is a separate
+  decision (new dated folder, with the person's OK).
 - **Commit**: code changes only; `data/` and `.env` are git-ignored.
 
 ---
@@ -107,10 +119,12 @@ Every upload shows the files, the destination and the QA before anything leaves 
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| Map changed in code but the run's maps are old | maps are built once with the package | `maps --thread <id> --gold-dir <package folder>` (section 4). |
 | A step failed after a code fix | the thread keeps the old result | `redo --after <previous node>`; a failed status is reset automatically. |
 | "ya existe con otro contenido" at an upload | the blob exists with other bytes | answer `"replace": true` only if you mean to replace it. |
 | Priorización CSVs "exist with other content" | priorización uploads without Content-MD5 | handled: only sidecars are uploaded, CSVs are verified by the download. |
 | Very few Datamatch matches, `distance_score` always 0 | client base with latitude/longitude swapped | the gold package detects and flags it; fix the column mapping in the Front JSON (latitude = the column that really holds latitudes) and rerun Datamatch. |
+| Map shows data on a plain gray background, note "Sin conexión" | no internet: the basemap tiles (Esri World Light Gray) did not load | open it with internet; hexagons, points and filters work offline. |
 | Map shows nothing at country zoom | (old maps) H3 cells under one pixel | regenerate: maps now draw a density layer at low zoom. |
 | Province appears twice in the map selector | Dataplor spellings ("Provincia de Córdoba", "Cordoba") | regenerate: the map groups spellings into one canonical name. |
 | PDF/Excel without the Kin logo | `cairosvg` not installed | optional; the brand rule leaves the slot empty rather than redraw the logo. |

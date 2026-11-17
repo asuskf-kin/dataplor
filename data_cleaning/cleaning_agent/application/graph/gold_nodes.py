@@ -35,7 +35,7 @@ from cleaning_agent.domain.warehouse import Layer, layer_prefix
 GOLD_ERRORS = (ValueError, OSError, RuntimeError, KeyError)
 
 
-def _request(
+def gold_request(
     deps: Dependencies, state: CleaningState, out_dir: Path
 ) -> GoldPackageRequest:
     decision = PriorizacionDecision.model_validate(state["priorizacion"])
@@ -89,7 +89,7 @@ def make_stage_gold_package(deps: Dependencies) -> NodeFn:
         out_dir = deps.mirror_root / prefix
         started = now_iso()
         try:
-            request = _request(deps, state, out_dir)
+            request = gold_request(deps, state, out_dir)
             result = deps.gold_package.build(request)
         except GOLD_ERRORS as exc:
             # Full traceback in the log: the package touches many files and renderers

@@ -521,6 +521,14 @@ class FakeGoldPackage:
     requests: list[GoldPackageRequest] = field(default_factory=list)
     leak_name: bool = False  # the KO file wrongly carries the name column
 
+    def build_maps(self, request: GoldPackageRequest) -> list[str]:
+        self.requests.append(request)
+        names = request.names()
+        return [
+            str(request.out_dir / "results_ko" / names["ko_map"]),
+            str(request.out_dir / "results_bottler" / names["bottler_map"]),
+        ]
+
     def build(self, request: GoldPackageRequest) -> GoldPackageResult:
         self.requests.append(request)
         out, names = request.out_dir, request.names()

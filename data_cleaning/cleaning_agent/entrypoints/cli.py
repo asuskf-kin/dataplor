@@ -13,6 +13,7 @@ questions loses nothing; ``resume`` continues the same thread.
     uv run python -m cleaning_agent status --thread <id>
     uv run python -m cleaning_agent interactive
     uv run python -m cleaning_agent graph          # Mermaid diagram
+    uv run python -m cleaning_agent maps --thread <id> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>
 """
 
 import argparse
@@ -24,7 +25,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableConfig
@@ -33,7 +34,9 @@ from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
 from cleaning_agent.application.graph.builder import RECURSION_LIMIT, build_graph
+from cleaning_agent.application.graph.gold_nodes import gold_request
 from cleaning_agent.application.graph.progress import progress_markdown, step_view
+from cleaning_agent.application.graph.state import CleaningState
 from cleaning_agent.settings import PROJECT_ROOT
 from cleaning_agent.wiring import checkpoints_path, default_dependencies
 
@@ -272,6 +275,28 @@ def run_interactive(
     return view
 
 
+def run_maps(
+    app: CompiledStateGraph[Any, Any, Any, Any], thread_id: str, gold_dir: Path
+) -> dict[str, Any]:
+    """Rebuild only the KO / BOTTLER maps of a finished run's gold package.
+
+    For map changes (basemap, colours, filters) after the package was built: the
+    CSVs, Excel and deck stay byte-identical, so nothing already uploaded changes.
+    The new maps stay in the local mirror; publishing them is a separate decision.
+    """
+    folder = gold_dir if gold_dir.is_absolute() else PROJECT_ROOT / gold_dir
+    if not (folder / "results_ko").is_dir():
+        raise SystemExit(f"{gold_dir} is not a gold package folder (no results_ko/)")
+    state = app.get_state(_config(thread_id)).values
+    if not state:
+        raise SystemExit(f"Thread {thread_id} does not exist")
+    deps = default_dependencies()
+    # The checkpoint returns the graph's own state dict (keys of CleaningState)
+    run_state = cast(CleaningState, state)
+    maps = deps.gold_package.build_maps(gold_request(deps, run_state, folder))
+    return {"status": "done", "thread_id": thread_id, "maps": maps}
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to cp1252; the questions are in Spanish
     for stream in (sys.stdout, sys.stderr):
@@ -312,7 +337,22 @@ def main(argv: list[str] | None = None) -> int:
     redo.add_argument("--thread", required=True)
     redo.add_argument("--after", required=True, help="Node whose next steps re-run")
     sub.add_parser("graph", help="Print the graph as Mermaid")
+    maps = sub.add_parser(
+        "maps", help="Rebuild only the maps of a run's gold package (local mirror)"
+    )
+    maps.add_argument("--thread", required=True)
+    maps.add_argument(
+        "--gold-dir",
+        required=True,
+        help="Package folder, e.g. data/gold/ko/ar/andina/prospecting-data/20261111",
+    )
     args = parser.parse_args(argv)
+
+    if args.command == "maps":
+        with open_app() as app:
+            view = run_maps(app, _check_thread_id(args.thread), Path(args.gold_dir))
+        print(json.dumps(view, ensure_ascii=False, indent=2))
+        return 0
 
     if args.command == "graph":
         print(build_graph(default_dependencies()).compile().get_graph().draw_mermaid())

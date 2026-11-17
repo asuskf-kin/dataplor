@@ -28,13 +28,14 @@ cleaning_agent/
     azure_storage.py     upload (no re-upload, MD5), download, list (retry + circuit breaker)
     layer_staging.py     local mirror, sidecars (_metadata.json + _qa.html)
     datamatch_steps.py   loop step files + cycle Excel
-    gold_package.py      KO/BOTTLER CSVs, opportunity Excel; calls the map and deck renderers
-    prospection_map.py   offline canvas map (no API)
+    gold_package.py      KO/BOTTLER CSVs, opportunity Excel; calls the map and deck renderers;
+                         build_maps() rewrites only the two maps of an existing package
+    prospection_map.py   canvas map on Esri Light Gray tiles; H3 res 6/7/8 by zoom, kin-hexmap palette
     prospecting_deck.py  .pptx renderer (template by shape id)
     priorizacion.py      priorización repo as a subprocess (own venv, own .env)
     brand.py · xlsx_brand.py   Kin brand for HTML, matplotlib and Excel
     assets/prospecting_deck_template.pptx
-  entrypoints/         cli.py (start, resume, status, redo, interactive, graph), studio.py
+  entrypoints/         cli.py (start, resume, status, redo, interactive, graph, maps), studio.py
   wiring.py            composition root: binds ports to adapters + config.yaml
   settings.py          reads config.yaml
 scripts/build_prospecting_deck_template.py   one-off: approved deck -> sanitized template

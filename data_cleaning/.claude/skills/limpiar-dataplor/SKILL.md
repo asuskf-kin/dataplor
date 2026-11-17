@@ -80,7 +80,8 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
   Puedes mostrar conteos y nombres de columnas, nunca valores de clientes.
 - Nunca leas ni muestres `.env` ni credenciales de Azure; si falta configurarlas, díselo al usuario.
 - Entregables HTML/PDF/imagen siguen la skill `brand-guidelines-kin` (fuentes, tokens y logo embebidos).
-- Para regenerar un paso tras un cambio de código: `uv run python -m cleaning_agent redo --thread <hilo> --after <nodo>`.
+- Para regenerar un paso tras un cambio de código: `uv run python -m cleaning_agent redo --thread <hilo> --after <nodo>`
+  (solo los mapas: comando `maps`, abajo).
 - El QA de Datamatch tarda ~1-2 min (`uv run --project ../../QA_datamatch`); avisa antes de lanzarlo.
 - Para una prueba rápida, `max_batches: 2` en el formulario de geojson/clientes.
 - El Dataplor raw se lee por defecto del blob `dataplorraw/...` (solo el raw). GeoJSON y clientes
@@ -89,6 +90,15 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
 - DWH: capas drop_zone → bronze → silver → gold con la fecha yyyymmdd; las rutas salen de `config.yaml`
   (tabla en `docs/dwh-paths.md`). Si la persona da una ruta que no cuadra con el DWH (mayúsculas, espacios,
   `_` en vez de `/`, fecha antes de la entidad), avísale y propón la corregida antes de usarla.
-- Mapas: nunca usan una API (sin tiles ni CDN). Presentaciones: como Artifact.
+- Mapas: la única red es el mapa base gratuito Esri World Light Gray (sin clave, sin librerías ni CDN; nunca un
+  proveedor que pida API key, CARTO ya la pide). Colores del lienzo = paleta kin-hexmap (`MAP_PALETTE` en
+  `adapters/prospection_map.py`), solo en el mapa; el panel lateral sigue la marca Kin. Hexágonos H3 Auto (6/7/8
+  según zoom) o fijos 6/7/8/9, color por score promedio (o n.º de prospectos), puntos por existencia o score,
+  leyenda flotante con rangos reales. Sin ciudad, provincia o score > 0 no se dibujan (los CSV los conservan).
+- Si cambia el código del mapa y la persona quiere los mapas nuevos de una corrida ya hecha:
+  `uv run python -m cleaning_agent maps --thread <hilo> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`
+  (solo reescribe los dos HTML en el espejo local; para verlos, `preview-data` de `.claude/launch.json`). Subirlos
+  a Azure es otra decisión: no se re-sube lo ya publicado; propón carpeta con fecha nueva y pide el OK.
+- Presentaciones: como Artifact.
 - Base de clientes con latitud/longitud intercambiadas: el paquete gold lo detecta y lo marca; recomienda
   rehacer el Datamatch con el mapeo de columnas corregido.
