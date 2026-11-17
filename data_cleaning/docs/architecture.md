@@ -14,7 +14,8 @@ cleaning_agent/
     franchises.py        franchise marks
     datamatch_steps.py   Datamatch loop: matched rows, reduced base, prospects QA
     priorizacion.py      priorización names, geo-layer prefix, QA
-    gold_package.py      priority 1-6, KO/BOTTLER columns, opportunity tables, deck figures,
+    gold_package.py      priority 1-6, poi_ref (1..N, KO/BOTTLER key), KO/BOTTLER columns (KO without
+                         dataplor_id; region only when known), opportunity tables, deck figures,
                          swapped-coordinates rule, canonical province names
     lineage.py           stage records
   application/
@@ -28,9 +29,10 @@ cleaning_agent/
     azure_storage.py     upload (no re-upload, MD5), download, list (retry + circuit breaker)
     layer_staging.py     local mirror, sidecars (_metadata.json + _qa.html)
     datamatch_steps.py   loop step files + cycle Excel
-    gold_package.py      KO/BOTTLER CSVs, opportunity Excel; calls the map and deck renderers;
+    gold_package.py      KO/BOTTLER CSVs (write_csv + flat_text: BOM, CRLF, no quoted field), region from
+                         a named territory GeoJSON, opportunity Excel; calls the map and deck renderers;
                          build_maps() rewrites only the two maps of an existing package
-    prospection_map.py   canvas map on Esri Light Gray tiles; H3 res 6/7/8 by zoom, kin-hexmap palette
+    prospection_map.py   canvas map on Esri Light Gray tiles; H3 res 7/8/9, kin-hexmap palette; KO = hexagons only
     prospecting_deck.py  .pptx renderer (template by shape id)
     priorizacion.py      priorización repo as a subprocess (own venv, own .env)
     brand.py · xlsx_brand.py   Kin brand for HTML, matplotlib and Excel

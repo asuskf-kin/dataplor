@@ -532,7 +532,7 @@ class FakeGoldPackage:
     def build(self, request: GoldPackageRequest) -> GoldPackageResult:
         self.requests.append(request)
         out, names = request.out_dir, request.names()
-        ko_columns = ["dataplor_id", "prioridad", *(["name"] if self.leak_name else [])]
+        ko_columns = ["poi_ref", "prioridad", *(["name"] if self.leak_name else [])]
         return GoldPackageResult(
             root=[str(out / names["xlsx"]), str(out / names["deck"])],
             ko=[

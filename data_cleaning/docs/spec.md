@@ -95,15 +95,29 @@ close they are to current routes — and deliver it to the warehouse and to the 
 - **Area**: `dentro` when `dist_ref_m ≤ 300`, else `fuera`.
 - **Priority**: 1 Dentro·High, 2 Dentro·Moderate, 3 Dentro·Low, 4 Fuera·High, 5 Fuera·Moderate, 6 Fuera·Low.
 - **Hexagons**: `hex_7`, `hex_8`, `hex_9` (H3).
-- **KO CSV** (19 columns, anonymous): `dataplor_id, prioridad, prioridad_orden, area, probability_existence_cat,
-  business_category, channel_cat, city, state, country, pop_density, car_mobility, walk_mobility,
-  dist_to_main_road, dist_to_bus_stop, weighted_combined_score, hex_7, hex_8, hex_9`.
-- **BOTTLER CSV**: id, priority, every priorización column, nearest client, area, hexagons.
+- **poi_ref**: rows sorted by `prioridad_orden`, then score (desc), then `dataplor_id`, and numbered 1..N. It is
+  the shared key of the KO and BOTTLER files (as in the approved Golfo package).
+- **region**: the bottler's sub-territory, only when the territory GeoJSON features carry a region name
+  (`region`, `Region`, `REGION`, `region_name`, `nombre_region`); otherwise the column is not written (Andina AR:
+  one unnamed polygon, no `region`).
+- **KO CSV** (19 columns, +`region` when known; anonymous): `poi_ref, prioridad, prioridad_orden, area, [region],
+  probability_existence_cat, business_category, channel_cat, city, state, country, pop_density, car_mobility,
+  walk_mobility, dist_to_main_road, dist_to_bus_stop, weighted_combined_score, hex_7, hex_8, hex_9`. Never
+  `dataplor_id` (it leads back to the place), name, address, coordinates or client columns.
+- **BOTTLER CSV** (Golfo order): `poi_ref, dataplor_id, prioridad, prioridad_orden`, every priorización column,
+  `ref_<client column>_cercano…, dist_ref_m, area, [region], hex_7, hex_8, hex_9`.
+- **CSV format** (both): UTF-8 with BOM, comma, CRLF, and **no field ever needs quotes**
+  (`adapters/gold_package.py::flat_text` / `write_csv`): Dataplor's JSON columns (`historical_*_scores`,
+  `place_attributes`) become flat text (`2024-11: 0.9942 | 2024-12: 0.5`; attribute flags `environment_cozy |
+  service_takeout`; `{}` empty), commas inside free text become ` - `, double quotes `'`, line breaks a space.
+  Quoted JSON is valid CSV but LibreOffice/Excel (Spanish locale) split it at every comma and shifted the row
+  (the hours landed under other headers); now even a naive comma split gives the same width on every line.
 - **Opportunity Excel**: Resumen_Ejecutivo (universe = prospects + current clients), Por_Ciudad,
   Por_Provincia.
 - **Maps** (KO and BOTTLER): one HTML; canvas + Web Mercator over Esri World Light Gray tiles (the only
-  network use; data works offline); density dots at country zoom, H3 hexagons closer in at resolution 6
-  (region), 7 (city) or 8 (neighbourhood) by zoom, or a fixed 6/7/8/9 chosen in the sidebar; hexagons coloured
+  network use; data works offline); density dots at country zoom, H3 hexagons closer in at resolution 7
+  (region), 8 (city) or 9 (neighbourhood) by zoom, or a fixed 7/8/9 chosen in the sidebar; the KO map carries
+  hexagons only (no prospect or client coordinates, no client counts), the BOTTLER map adds points and clients; hexagons coloured
   by average priorización score (default) or by number of prospects, points by existence or score, quintile
   ranges in a floating legend; per-hexagon tooltip from the Dataplor columns; prospects without city,
   province or a score above 0 are left out of the map only (CSVs keep them); `maps` CLI rebuilds only the maps
@@ -113,7 +127,7 @@ close they are to current routes — and deliver it to the warehouse and to the 
 - **Deck** (.pptx): `cleaning_agent/adapters/assets/prospecting_deck_template.pptx` filled by shape id.
 - **Client coordinates swapped** (latitude in the longitude column): detected against the prospects'
   extent, fixed for distances, flagged in every file's metadata (`alertas`, `POR VERIFICAR`).
-- QA: KO rows = BOTTLER rows = priorización rows; KO has no name/coordinates/client columns; every row has
+- QA: KO rows = BOTTLER rows = priorización rows; KO has no name/coordinates/`dataplor_id`/client columns; every row has
   a priority.
 
 ## 5. Metadata of every layer file (`<archivo>_metadata.json`)

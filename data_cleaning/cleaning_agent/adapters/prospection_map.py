@@ -7,7 +7,8 @@ required"; the user asked for a free source instead (2026-11-17), so the canvas 
 the Esri World Light Gray tiles (no key): the base under the hexagons, the street and
 place names over them. The tiles are the only network use; no library or CDN is loaded
 and without internet the data still works on a plain background. Hexagon resolution
-follows the zoom (6 region, 7 city, 8 neighbourhood). Sidebar fonts, tokens and logo
+follows the zoom (7 region, 8 city, 9 neighbourhood) or is fixed by the user. The KO map
+carries hexagons only (no coordinate of a prospect or a client). Sidebar fonts, tokens and logo
 are embedded (skill brand-guidelines-kin).
 
 Navigation is built for field and sales teams: pick a province or a city and the map
@@ -71,16 +72,12 @@ MAP_PALETTE: dict[str, Any] = {
 }
 
 # H3 resolution per zoom band of the map: region, city, neighbourhood
-MAP_RESOLUTIONS = (6, 7, 8, 9)
+MAP_RESOLUTIONS = (7, 8, 9)
 
 
 def _cells_at(prospects: pl.DataFrame, res: int) -> list[str]:
-    """Each prospect's H3 cell at ``res``, from the package's hex_7/hex_8 columns."""
-    if f"hex_{res}" in prospects.columns:
-        return [str(c) for c in prospects.get_column(f"hex_{res}").to_list()]
-    return [
-        h3.cell_to_parent(str(c), res) for c in prospects.get_column("hex_7").to_list()
-    ]
+    """Each prospect's H3 cell at ``res`` (the package's hex_7 / hex_8 / hex_9 columns)."""
+    return [str(c) for c in prospects.get_column(f"hex_{res}").to_list()]
 
 
 def _grid(
@@ -130,15 +127,28 @@ def _payload(
     audience: str,
     columns: ClientColumns,
 ) -> dict[str, Any]:
-    lat = prospects.get_column("latitude").cast(pl.Float64).round(5).to_list()
-    lon = prospects.get_column("longitude").cast(pl.Float64).round(5).to_list()
-    client_lat = clients.get_column("_lat").to_list()
-    client_lon = clients.get_column("_lon").to_list()
+    # KO is anonymous like its CSV: no name, no coordinate of a prospect or a client
+    # and nothing derived from the client base. Its map carries hexagons only (the H3
+    # ids are already KO columns); the BOTTLER map keeps points and clients.
+    ko = audience == "ko"
+    lat = (
+        []
+        if ko
+        else prospects.get_column("latitude").cast(pl.Float64).round(5).to_list()
+    )
+    lon = (
+        []
+        if ko
+        else prospects.get_column("longitude").cast(pl.Float64).round(5).to_list()
+    )
+    client_lat = [] if ko else clients.get_column("_lat").round(5).to_list()
+    client_lon = [] if ko else clients.get_column("_lon").round(5).to_list()
     cats, u_cats = _codes(prospects.get_column("business_category"))
     # One entry per place in the selectors, whatever spelling Dataplor used
     cities, u_cities = _codes(_canonical(prospects.get_column("city")))
     states, u_states = _codes(_canonical(prospects.get_column("state")))
     data: dict[str, Any] = {
+        "ko": ko,
         "lat": lat,
         "lon": lon,
         "cat": cats,
@@ -158,8 +168,8 @@ def _payload(
         "xcat": [],
         "xnum": [],
         "territory": territory,
-        "cLat": clients.get_column("_lat").round(5).to_list(),
-        "cLon": clients.get_column("_lon").round(5).to_list(),
+        "cLat": client_lat,
+        "cLon": client_lon,
         "names": [],
         "cNames": [],
     }
@@ -269,7 +279,7 @@ MAP_JS = r"""
 const tok=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const K={y:tok('--ka-color-yellow'),b:tok('--ka-color-black'),w:tok('--ka-color-white'),g1:tok('--ka-color-gray-1'),g2:tok('--ka-color-gray-2'),g3:tok('--ka-color-gray-3'),g4:tok('--ka-color-gray-4')};
 // Hexagon classes on the light basemap: five steps of Black, Kin Yellow for the top class
-const N=D.lat.length,POINT_ZOOM=12.5,FEW_POINTS=6000;
+const N=D.cat.length,POINT_ZOOM=12.5,FEW_POINTS=6000;
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 // 8574 -> 8.574 (the 'es' locale leaves 4-digit numbers ungrouped)
 const fmt=n=>String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g,'.');
@@ -278,7 +288,6 @@ const num2=v=>v.toFixed(2).replace('.',',');
 const cv=$('cv'),ctx=cv.getContext('2d'),tip=$('tip'),pop=$('pop');
 // Web Mercator in "world pixels" at zoom 0 (256 px world), the same grid as the XYZ tiles
 const px=lon=>(lon+180)/360*256,py=lat=>{const s=Math.sin(lat*Math.PI/180);return (0.5-Math.log((1+s)/(1-s))/(4*Math.PI))*256};
-const X=Float64Array.from(D.lon,px),Y=Float64Array.from(D.lat,py);
 const CX=Float64Array.from(D.cLon,px),CY=Float64Array.from(D.cLat,py);
 // One H3 grid per resolution: 6 at regional scale, 7 at city scale, 8 at neighbourhood scale
 const RES=D.res.map(R=>{const cells=R.cells.map(r=>r.map(([la,lo])=>[px(lo),py(la)]));
@@ -286,9 +295,14 @@ const RES=D.res.map(R=>{const cells=R.cells.map(r=>r.map(([la,lo])=>[px(lo),py(l
   const w=cells.length?Math.max(...cells[0].map(p=>p[0]))-Math.min(...cells[0].map(p=>p[0])):0;
   const clients=new Map();R.clients.forEach(c=>{if(c>=0)clients.set(c,(clients.get(c)||0)+1)});
   return {r:R.r,hex:R.hex,cells,cc,w,clients}});
-// 'auto' follows the zoom (6 region, 7 city, 8 neighbourhood); a chip fixes one resolution
+// 'auto' follows the zoom (7 region, 8 city, 9 neighbourhood); a chip fixes one resolution
 let resMode='auto';
-const resFor=z=>resMode!=='auto'?resMode:z<10?0:z<12?1:2;
+// Where each prospect sits for framing and density: its point (BOTTLER) or, in the KO
+// map that has no coordinates, the centre of its finest H3 cell
+let X,Y;
+if(D.lat.length){X=Float64Array.from(D.lon,px);Y=Float64Array.from(D.lat,py)}
+else{const G=RES[RES.length-1];X=Float64Array.from(G.hex,c=>G.cc[c][0]);Y=Float64Array.from(G.hex,c=>G.cc[c][1])}
+const resFor=z=>resMode!=='auto'?resMode:z<10?0:z<12.5?1:2;
 const TERR=D.territory.map(r=>r.map(([la,lo])=>[px(lo),py(la)]));
 let view={x:128,y:128,z:4},W=0,H=0,dpr=1,anim=null;
 const sx=x=>(x-view.x)*2**view.z+W/2,sy=y=>(y-view.y)*2**view.z+H/2;
@@ -345,11 +359,11 @@ function refilter(){vis=[];hexCount=RES.map(()=>new Map());hexScore=RES.map(()=>
 const classOf=(v,b)=>{for(let i=0;i<4;i++)if(v<=b[i])return i;return 4};
 const hexClass=(v,k)=>classOf(v,breaks[k]);
 const ptColor=i=>ptMetric==='score'?P.hex[classOf(D.score[i],ptBreaks)]:existColor(i);
-const layers={base:true,hex:true,points:true,clients:D.cLat.length>0,territory:D.territory.length>0};
+const layers={base:true,hex:true,points:!D.ko,clients:D.cLat.length>0,territory:D.territory.length>0};
 const xcat=key=>D.xcat.find(x=>x.key===key);
 const EXIST=xcat('probability_existence_cat'),AREA=xcat('area');
 const existColor=i=>{if(!EXIST)return P.high;const v=EXIST.uniq[EXIST.codes[i]];return v==='high'?P.high:v==='moderate'?P.moderate:P.low};
-const showPoints=()=>view.z>=POINT_ZOOM||vis.length<=FEW_POINTS;
+const showPoints=()=>!D.ko&&(view.z>=POINT_ZOOM||vis.length<=FEW_POINTS);
 
 // ---- drawing
 function path(r){ctx.beginPath();r.forEach(([x,y],j)=>j?ctx.lineTo(sx(x),sy(y)):ctx.moveTo(sx(x),sy(y)));ctx.closePath()}
@@ -373,7 +387,7 @@ function draw(){
     if(hover>=0&&hexCount[k].has(hover)){path(R.cells[hover]);ctx.strokeStyle=K.b;ctx.lineWidth=2.5;ctx.stroke();ctx.strokeStyle=K.w;ctx.lineWidth=1.25;ctx.stroke()}}
   // Street and place names stay readable above the hexagons
   if(layers.base)drawTiles('Canvas/World_Light_Gray_Reference');
-  $('hint').style.display=pts||!vis.length?'none':'block';
+  $('hint').style.display=pts||!vis.length||D.ko&&view.z>=8?'none':'block';
   // Current clients: dark squares, so they never read as a prospect
   if(view.z>=POINT_ZOOM&&layers.clients){ctx.fillStyle=P.client;ctx.strokeStyle=K.w;ctx.lineWidth=1;for(let i=0;i<CX.length;i++){const x=sx(CX[i]),y=sy(CY[i]);if(x<0||y<0||x>W||y>H)continue;ctx.fillRect(x-3.5,y-3.5,7,7);ctx.strokeRect(x-3.5,y-3.5,7,7)}}
   if(pts&&layers.points){ctx.strokeStyle=K.b;ctx.lineWidth=1;ctx.globalAlpha=.95;const r=view.z>=POINT_ZOOM?5:3.5;for(const i of vis){const x=sx(X[i]),y=sy(Y[i]);if(x<0||y<0||x>W||y>H)continue;ctx.fillStyle=ptColor(i);ctx.beginPath();ctx.arc(x,y,r,0,7);ctx.fill();ctx.stroke()}ctx.globalAlpha=1}
@@ -422,7 +436,7 @@ function hexTip(k,c){const s=hexSummary(k,c),pct=vis.length?s.n/vis.length*100:0
   const rows=hexMetric==='score'?[row('Score promedio',sc,true,col),row('Prospectos visibles',prosp)]:[row('Prospectos visibles',prosp,true,col),row('Score promedio',sc)];
   if(EXIST)['high','moderate','low'].forEach(e=>rows.push(row(`Existencia ${e}`,fmt(s.ex[e]||0))));
   if(AREA){rows.push(row('A ≤300 m de un cliente',fmt(s.inside)));rows.push(row('Fuera de cobertura',fmt(s.n-s.inside)))}
-  rows.push(row('Clientes actuales',fmt(s.clients)));
+  if(!D.ko)rows.push(row('Clientes actuales',fmt(s.clients)));
   if(s.cat!==undefined)rows.push(row('Categoría principal',esc(D.uCat[s.cat])));
   return `<div class="tt-h">Hexágono · resolución ${RES[k].r}${s.city!==undefined&&D.uCity[s.city]?' · '+esc(D.uCity[s.city]):''}</div><div class="tt">${rows.join('')}</div><div class="tt-f">Clic para acercar</div>`}
 let hoverFrame=0;
@@ -442,8 +456,8 @@ function clickAt(e){const [mx,my]=local(e);
     if(client>=0||best>=0){showPopup(client>=0?-1:best,client,mx,my);return}}
   const k=resFor(view.z),c=layers.hex&&R0px()>=3?hexAt(mx,my):-1;
   if(c>=0){const r=RES[k].cells[c];const xs=r.map(p=>p[0]),ys=r.map(p=>p[1]);
-    // One level down: res 6 -> city scale (res 7), res 7 -> neighbourhood (res 8), res 8 -> points
-    const t=targetFor([Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]);t.z=[10.75,12.75,POINT_ZOOM+1.25,POINT_ZOOM+2.5][k];flyTo(t);return}
+    // One level down: res 7 -> city scale (res 8), res 8 -> neighbourhood (res 9), res 9 -> closer
+    const t=targetFor([Math.min(...xs),Math.min(...ys),Math.max(...xs),Math.max(...ys)]);t.z=[10.75,13,POINT_ZOOM+2][k];flyTo(t);return}
   pop.style.display='none'}
 function showPopup(best,client,mx,my){let h;tip.style.display='none';
   if(best>=0){const rows=[`Categoría: ${esc(D.uCat[D.cat[best]])}`,`Ciudad: ${esc(D.uCity[D.city[best]])} · ${esc(D.uState[D.state[best]])}`,`Score: <i class="sw" style="display:inline-block;width:.625rem;height:.625rem;border-radius:.125rem;background:${P.hex[classOf(D.score[best],ptBreaks)]}"></i> <b>${num2(D.score[best])}</b>`];
@@ -481,7 +495,7 @@ function updateCrumb(){const parts=['Territorio'];if(fState>=0)parts.push(D.uSta
   $('crumb').innerHTML=parts.map(esc).join(' › ')+` · <b>${fmt(vis.length)}</b> prospectos`}
 function updateActive(){const n=(fState>=0)+(fCity>=0)+(fCat>=0)+(fText?1:0)+fX.reduce((s,x)=>s+(x.size?1:0),0)+fMax.reduce((s,m,k)=>s+(m<D.xnum[k].max?1:0),0);
   $('active').textContent=n?`${n} filtro${n>1?'s':''} activo${n>1?'s':''}`:'Sin filtros: todo el territorio'}
-const LAY=[['base','Mapa base (calles y lugares)'],['hex','Hexágonos'],['points','Prospectos'],['clients',`Clientes actuales (${fmt(D.cLat.length)})`],['territory','Territorio']].filter(([k])=>k!=='territory'||D.territory.length);
+const LAY=[['base','Mapa base (calles y lugares)'],['hex','Hexágonos'],['points','Prospectos'],['clients',`Clientes actuales (${fmt(D.cLat.length)})`],['territory','Territorio']].filter(([k])=>(k!=='territory'||D.territory.length)&&!(D.ko&&(k==='points'||k==='clients')));
 $('layers').innerHTML=LAY.map(([k,t])=>`<div class="row"><span>${t}</span><span class="toggle${layers[k]?' on':''}" data-k="${k}" role="switch" aria-label="${t}"></span></div>`).join('');
 document.querySelectorAll('.toggle').forEach(t=>t.onclick=()=>{const k=t.dataset.k;layers[k]=!layers[k];t.classList.toggle('on');
   if(k==='base')$('osm').style.display=layers.base?'block':'none';draw()});
@@ -489,8 +503,8 @@ $('st-total').textContent=fmt(N);
 function seg(id,opts,get,set){const box=$(id);opts.forEach(([v,t,help])=>{const o=document.createElement('span');o.textContent=t;if(help)o.title=help;if(get()===v)o.className='on';
   o.onclick=()=>{set(v);box.querySelectorAll('span').forEach(x=>x.classList.remove('on'));o.classList.add('on');hover=-1;tip.style.display='none';rebreak();updateLegend();draw()};box.appendChild(o)})}
 seg('seg-hex',[['score','Score promedio','Promedio del score de priorización de los prospectos del hexágono'],['count','N.º de prospectos','Cantidad de prospectos visibles en el hexágono']],()=>hexMetric,v=>{hexMetric=v});
-seg('seg-pt',[['exist','Existencia'],['score','Score']],()=>ptMetric,v=>{ptMetric=v});
-seg('seg-res',[['auto','Auto','La resolución sigue el zoom: 6 región, 7 ciudad, 8 barrio'],[0,'6'],[1,'7'],[2,'8'],[3,'9']],()=>resMode,v=>{resMode=v});
+if(!D.ko)seg('seg-pt',[['exist','Existencia'],['score','Score']],()=>ptMetric,v=>{ptMetric=v});
+seg('seg-res',[['auto','Auto','La resolución sigue el zoom: 7 región, 8 ciudad, 9 barrio'],[0,'7'],[1,'8'],[2,'9']],()=>resMode,v=>{resMode=v});
 // Floating legend: the colour scale with the real value ranges of what is on screen
 let legendK=-1;
 function rangeText(b,i,isInt){const f=isInt?(v=>fmt(v)):num2;const lo=i?b[i-1]:null,hi=i<4?b[i]:null;
@@ -501,10 +515,10 @@ function updateLegend(){const k=resFor(view.z);legendK=k;const isInt=hexMetric==
   let h=`<div class="lh"><span>${title}</span><small>H3 res ${RES[k].r}${resMode==='auto'?' · auto':''} ▾</small></div><div class="body">`;
   h+=`<div class="lt">Hexágonos (quintiles · n.º de hexágonos)</div>`;
   for(let i=4;i>=0;i--)h+=`<div class="lr"><span class="sw" style="background:${P.hex[i]};opacity:${P.hex_opacity+.2}"></span><span class="v">${rangeText(b,i,isInt)}</span><span class="n">${fmt(cnt[i])}</span></div>`;
-  h+=`<div class="lt">Prospectos (puntos)</div>`;
+  if(!D.ko){h+=`<div class="lt">Prospectos (puntos)</div>`;
   if(ptMetric==='score')for(let i=4;i>=0;i--)h+=`<div class="lr"><span class="pd" style="background:${P.hex[i]}"></span><span class="v">${rangeText(ptBreaks,i,false)}</span><span></span></div>`;
   else [['high','Existencia high'],['moderate','Existencia moderate'],['low','Existencia low']].forEach(([e,t])=>{h+=`<div class="lr"><span class="pd" style="background:${P[e]}"></span><span>${t}</span><span></span></div>`});
-  if(D.cLat.length)h+=`<div class="lr"><span class="cs" style="background:${P.client}"></span><span>Cliente actual del bottler</span><span></span></div>`;
+  if(D.cLat.length)h+=`<div class="lr"><span class="cs" style="background:${P.client}"></span><span>Cliente actual del bottler</span><span></span></div>`}
   $('legend').innerHTML=h+'</div>';$('legend').querySelector('.lh').onclick=()=>$('legend').classList.toggle('min')}
 window.addEventListener('resize',resize);resize();refilter();fitAll(1);
 """
@@ -522,7 +536,16 @@ def render_map(
     shown = map_prospects(prospects)
     hidden = prospects.height - shown.height
     data = _payload(shown, clients, territory, audience, columns)
-    version = "Versión KO · sin nombres" if audience == "ko" else "Versión Bottler"
+    version = (
+        "Versión KO · solo hexágonos, sin nombres ni coordenadas"
+        if audience == "ko"
+        else "Versión Bottler"
+    )
+    points_control = (
+        ""
+        if audience == "ko"
+        else '<label class="f">Color de puntos</label><div class="seg" id="seg-pt"></div>'
+    )
     search = (
         "Buscar nombre o categoría" if audience == "bottler" else "Buscar categoría"
     )
@@ -539,14 +562,14 @@ def render_map(
 {MAP_CSS}</style></head><body>
 <aside id="side">{brand.logo(LOGO_FORMAL_DARK)}
 <div class="eyebrow">Mapa de prospección</div><h1>{title}</h1>
-<p class="sub">{version} · {_es(len(data["lat"]))} prospectos{f" ({_es(hidden)} sin ciudad, provincia o score no se muestran)" if hidden else ""} · <span class="ka-site">kinanalytics.com</span></p>
+<p class="sub">{version} · {_es(shown.height)} prospectos{f" ({_es(hidden)} sin ciudad, provincia o score no se muestran)" if hidden else ""} · <span class="ka-site">kinanalytics.com</span></p>
 <div class="stats"><div class="stat"><div class="num" id="st-total"></div><div class="lbl">Prospectos</div></div>
 <div class="stat"><div class="num key" id="st-vis"></div><div class="lbl">Visibles</div></div></div>
 <div class="sec">Vista</div>
 <label class="f">Color de hexágonos</label><div class="seg" id="seg-hex"></div>
-<label class="f">Color de puntos</label><div class="seg" id="seg-pt"></div>
+{points_control}
 <label class="f">Resolución H3</label><div class="seg" id="seg-res"></div>
-<p class="help">Auto: 6 en región, 7 en ciudad y 8 en barrio. La leyenda del mapa muestra los rangos de lo visible.</p>
+<p class="help">Auto: 7 en región, 8 en ciudad y 9 en barrio. La leyenda del mapa muestra los rangos de lo visible.</p>
 <div class="sec">Ubicación</div>
 <label class="f" for="f-state">Provincia</label><select class="sel" id="f-state"></select>
 <label class="f" for="f-city">Ciudad</label><select class="sel" id="f-city"></select>

@@ -100,11 +100,17 @@ Every upload shows the files, the destination and the QA before anything leaves 
 - **Presentation**: build/refresh the deck as a Slides Artifact on the "Kin Design System - Kin Official"
   (Claude does it from the gold figures); the .pptx in gold is the agent's own render.
 - **Share**: Artifacts are private until shared from their Share menu.
+- **CSVs**: `results_ko/…_ko.csv` (anonymous: `poi_ref`, no `dataplor_id`, names, coordinates or clients) and
+  `results_bottler/…_bottler.csv` (everything + nearest client). Both open in Excel as is (UTF-8 BOM, CRLF);
+  cross them by `poi_ref`. `region` appears only when the territory GeoJSON names its regions. No field is
+  quoted (JSON columns are flattened), so the columns stay aligned in LibreOffice and Excel. With a Spanish
+  locale Excel may read decimals with `.` as text: use Datos › Desde texto/CSV with decimal separator `.`.
 - **Maps**: open `results_ko/prospection_map_<bottler>_ko.html` and `results_bottler/…_bottler.html` in a
   browser with internet (the basemap tiles are the only network use). In the sidebar: **Vista** (hexagon colour by
-  average score or n.º de prospectos, points by existence or score, H3 resolution Auto/6/7/8/9), **Ubicación**,
+  average score or n.º de prospectos, points by existence or score, H3 resolution Auto/7/8/9), **Ubicación**,
   **Filtros**, **Capas**. The floating legend shows the real quintile ranges of what is on screen; hover a hexagon
-  for its tooltip, click to zoom one level. Prospects without city, province or a score above 0 are not drawn
+  for its tooltip, click to zoom one level. The **KO** map has hexagons only (no points, no clients, no
+  coordinates), like the KO CSV; the **Bottler** map adds points and clients. Prospects without city, province or a score above 0 are not drawn
   (the subtitle says how many); the CSVs keep them.
 - **Rebuild the maps after a map change** (code in `cleaning_agent/adapters/prospection_map.py`), without
   rerunning the package: `uv run python -m cleaning_agent maps --thread <thread_id> --gold-dir

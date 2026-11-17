@@ -172,3 +172,32 @@
 - Por qué: los mapas cambiaron varias veces después de subir el paquete de Andina; `redo` rehacía todo el paquete
   (CSV, Excel, deck) y cambiaría archivos ya subidos. Con `maps` lo publicado conserva tamaño y MD5, y cualquier
   persona puede rehacer los mapas sin esta sesión.
+
+## 2026-11-17 · Mapa KO solo hexágonos; resoluciones 7/8/9
+
+- Qué: el mapa KO ya no lleva latitud/longitud de prospectos ni de clientes, ni conteo de clientes por hexágono:
+  solo hexágonos (los ids H3 ya son columnas del CSV KO; el encuadre usa el centro de la celda res 9). El mapa
+  Bottler mantiene puntos y clientes. Resoluciones H3 del mapa: 7, 8 y 9 (Auto: 7 región, 8 ciudad, 9 barrio).
+- Por qué: KO es anónimo igual que su CSV (sin nombre, coordenadas ni cliente); el mapa KO anterior embebía
+  coordenadas. La persona fijó las resoluciones en 7, 8 y 9.
+
+## 2026-11-17 · CSV del paquete gold con el formato de Golfo
+
+- Qué: KO y BOTTLER se escriben como el CSV aprobado de Golfo (UTF-8 con BOM, coma, CRLF, comillas solo donde hacen
+  falta, sin saltos de línea dentro de un campo). Nueva columna `poi_ref` (1…N por prioridad, luego score) como
+  clave común; el KO lleva `poi_ref` y ya no `dataplor_id` (con el id se llega al nombre y la ubicación en Dataplor).
+  `region` (subterritorio del bottler, como Golfo / Centro Pacífico) solo cuando el GeoJSON del territorio nombra sus
+  regiones.
+- Por qué: la persona pasó el CSV BOTTLER de Golfo como ejemplo, pidió que el formato no se rompa y que se respete lo
+  que es para KO; eligió KO solo con `poi_ref`, y `region` "si no lo tienes no lo pongas" (Andina: un solo polígono
+  sin nombre, sin `region`).
+- Las columnas `ref_*_cercano` siguen la base de clientes de cada bottler (`gold_package.client_columns.reference`).
+
+## 2026-11-17 · CSV sin campos entre comillas (JSON aplanado)
+
+- Qué: `write_csv` pasa cada texto por `flat_text`: el JSON de Dataplor (`historical_*_scores`, `place_attributes`) se
+  aplana a `clave: valor | …` (atributos: solo los nombres; `{}` vacío), comas del texto libre → ` - `, comillas → `'`,
+  saltos de línea → espacio. Ningún campo necesita comillas.
+- Por qué: al abrir el CSV en LibreOffice/Excel el JSON entre comillas se partía en cada coma y corría el resto de la
+  fila (la persona lo vio en las horas). Era CSV válido, pero no se veía bien; el CSV de Golfo tiene el mismo problema.
+  Verificado abriendo el BOTTLER de Andina con LibreOffice sin interfaz: 48 columnas, 0 valores fuera de su columna.
