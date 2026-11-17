@@ -65,4 +65,6 @@ legacy/          old main.py and report.ipynb, reference only (not run)
   the map canvas uses the kin-hexmap palette in `prospection_map.MAP_PALETTE`, not brand colours (user
   decision 2026-11-17). Review decks are Slides Artifacts on "Kin Design System - Kin Official". Every other
   deliverable (and the map sidebar) follows the `brand-guidelines-kin` skill; never "Let knowledge in".
+- Gold CSVs: UTF-8 BOM, comma, CRLF and no field that needs quotes (JSON flattened, see spec), with
+  `poi_ref` as the KO/BOTTLER key; KO never carries `dataplor_id`, names, coordinates or client data (spec).
 - No `type: ignore` (org policy): type the code instead.

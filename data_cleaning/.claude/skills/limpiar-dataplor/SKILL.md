@@ -100,6 +100,11 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
   `uv run python -m cleaning_agent maps --thread <hilo> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`
   (solo reescribe los dos HTML en el espejo local; para verlos, `preview-data` de `.claude/launch.json`). Subirlos
   a Azure es otra decisión: no se re-sube lo ya publicado; propón carpeta con fecha nueva y pide el OK.
+- CSV del paquete gold: UTF-8 con BOM, coma, CRLF y ningún campo entre comillas (`flat_text`: el JSON de Dataplor
+  se aplana a `clave: valor | …`, comas del texto → ` - `, comillas → `'`, saltos de línea → espacio); así no se
+  descuadra en LibreOffice/Excel. `poi_ref` (1…N por prioridad) cruza KO y BOTTLER. **KO**: `poi_ref` en lugar de
+  `dataplor_id`, sin nombre, coordenadas ni columnas de clientes. `region` solo si el GeoJSON del territorio nombra
+  sus regiones; si no, no se escribe. Detalle en `docs/spec.md`.
 - Presentaciones: como Artifact.
 - Base de clientes con latitud/longitud intercambiadas: el paquete gold lo detecta y lo marca; recomienda
   rehacer el Datamatch con el mapeo de columnas corregido.

@@ -2,8 +2,10 @@
 
 One package per bottler and period, in the gold folder of the prospects:
 
-- KO version: anonymous (no name, coordinates or client data), hexagons instead;
-- BOTTLER version: every column plus the nearest current client;
+- KO version: anonymous (no name, coordinates, Dataplor id or client data), hexagons
+  instead; rows are referenced by ``poi_ref``;
+- BOTTLER version: every column plus the nearest current client, with the same
+  ``poi_ref`` so both versions can be crossed (as in the approved Golfo package);
 - opportunity Excel, one map per audience and the results deck.
 
 Pure rules only: priority classes, column contracts and the figures of the Excel and
@@ -23,9 +25,10 @@ EXISTENCE = ("high", "moderate", "low")
 HIGH_MODERATE = ("high", "moderate")
 OTHERS = "Otros"
 
-# KO: what Coca-Cola sees. No name, address, coordinates or client data.
+# KO: what Coca-Cola sees. No name, address, coordinates, Dataplor id (it leads back
+# to the place) or client data; poi_ref is the shared key with the BOTTLER version.
 KO_COLUMNS = (
-    "dataplor_id",
+    "poi_ref",
     "prioridad",
     "prioridad_orden",
     "area",
@@ -46,6 +49,11 @@ KO_COLUMNS = (
     "hex_9",
 )
 HEX_RESOLUTIONS = (7, 8, 9)
+# Sub-territory of the bottler (e.g. Golfo / Centro Pacífico); only when the territory
+# GeoJSON names its regions, otherwise the column is not written
+REGION = "region"
+# Never in the KO version
+KO_FORBIDDEN = ("name", "latitude", "longitude", "address", "dataplor_id")
 MONTHS = (
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
@@ -117,11 +125,7 @@ def package_qa(
     priorities: int,
 ) -> dict[str, Any]:
     """Checks of the package before it goes to gold."""
-    leaked = [
-        c
-        for c in ko_columns
-        if c in ("name", "latitude", "longitude", "address") or c.startswith("ref_")
-    ]
+    leaked = [c for c in ko_columns if c in KO_FORBIDDEN or c.startswith("ref_")]
     checks = [
         {
             "check": "KO y BOTTLER tienen las filas de la priorización",
@@ -129,7 +133,7 @@ def package_qa(
             "detail": f"KO {ko_rows:,} · BOTTLER {bottler_rows:,} · priorización {scored_rows:,}",
         },
         {
-            "check": "La versión KO no trae nombres, coordenadas ni datos de clientes",
+            "check": "La versión KO no trae nombres, coordenadas, dataplor_id ni datos de clientes",
             "ok": not leaked,
             "detail": "ninguna" if not leaked else ", ".join(leaked),
         },
@@ -182,10 +186,40 @@ def with_priority(prospects: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def bottler_columns(scored: list[str], ref_columns: list[str]) -> list[str]:
-    """BOTTLER order: id, priority, the scored columns, nearest client, area, hexes."""
-    head = ["dataplor_id", "prioridad", "prioridad_orden"]
-    tail = [*ref_columns, "dist_ref_m", "area", *(f"hex_{r}" for r in HEX_RESOLUTIONS)]
+def with_poi_ref(prospects: pl.DataFrame) -> pl.DataFrame:
+    """Rows in priority order (class, then score, then id) numbered 1..N as poi_ref."""
+    score = pl.col("weighted_combined_score").cast(pl.Float64, strict=False)
+    ordered = prospects.sort(
+        [pl.col("prioridad_orden"), score, pl.col("dataplor_id")],
+        descending=[False, True, False],
+        nulls_last=True,
+    )
+    return ordered.with_columns(
+        pl.int_range(1, ordered.height + 1, dtype=pl.Int64).alias("poi_ref")
+    )
+
+
+def ko_columns(has_region: bool) -> list[str]:
+    """KO order; region right after area when the territory names its regions."""
+    cols = list(KO_COLUMNS)
+    if has_region:
+        cols.insert(cols.index("area") + 1, REGION)
+    return cols
+
+
+def bottler_columns(
+    scored: list[str], ref_columns: list[str], has_region: bool = False
+) -> list[str]:
+    """BOTTLER order (Golfo): poi_ref, id, priority, scored columns, nearest client,
+    area, region, hexes."""
+    head = ["poi_ref", "dataplor_id", "prioridad", "prioridad_orden"]
+    tail = [
+        *ref_columns,
+        "dist_ref_m",
+        "area",
+        *([REGION] if has_region else []),
+        *(f"hex_{r}" for r in HEX_RESOLUTIONS),
+    ]
     middle = [c for c in scored if c not in head and c not in tail]
     return [*head, *middle, *tail]
 

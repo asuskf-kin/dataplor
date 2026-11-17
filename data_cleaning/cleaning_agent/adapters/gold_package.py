@@ -7,11 +7,17 @@ maps and deck). Inputs are local files of the DWH mirror:
 - the bottler's client base, read only for the columns the BOTTLER version needs
   (id, name, region, jefatura, city and coordinates): its rows never reach a log,
   the KO files or the Excel, which only carry counts;
-- the Andina territory GeoJSON (territory of the maps, optional).
+- the Andina territory GeoJSON (territory of the maps, optional; when its features name
+  their regions, each prospect gets the ``region`` column).
+
+CSVs follow the approved Golfo files: UTF-8 with BOM, comma, CRLF, quotes only where a
+field needs them, and no line break inside a field (Excel and naive readers would split
+the row).
 """
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +26,7 @@ import numpy as np
 import polars as pl
 from openpyxl import Workbook
 from openpyxl.styles import Alignment
+from shapely.geometry import Point, shape
 from sklearn.neighbors import BallTree
 
 from cleaning_agent.adapters.brand import KinBrand
@@ -29,12 +36,14 @@ from cleaning_agent.adapters.prospection_map import render_map
 from cleaning_agent.adapters.xlsx_brand import XlsxStyle, band, section, table
 from cleaning_agent.domain.gold_package import (
     HEX_RESOLUTIONS,
-    KO_COLUMNS,
+    REGION,
     bottler_columns,
     coordinates_swapped,
     deck_figures,
+    ko_columns,
     opportunity_by,
     opportunity_summary,
+    with_poi_ref,
     with_priority,
 )
 from cleaning_agent.domain.models import GoldPackageRequest, GoldPackageResult
@@ -42,6 +51,8 @@ from cleaning_agent.domain.models import GoldPackageRequest, GoldPackageResult
 logger = logging.getLogger(__name__)
 
 EARTH_RADIUS_M = 6_371_008.8
+# Feature properties that name a region in the territory GeoJSON
+REGION_KEYS = ("region", "Region", "REGION", "region_name", "nombre_region")
 
 
 class GoldPackageError(ValueError):
@@ -176,11 +187,22 @@ class FileGoldPackage:
         if missing:
             raise GoldPackageError(f"scored prospects have no column(s) {missing}")
         clients, swapped = self._clients(request, scored)
-        prospects = with_priority(
-            self._hexes(
-                self._nearest_client(scored, clients, request.client_columns.reference)
+        prospects = with_poi_ref(
+            with_priority(
+                self._hexes(
+                    self._nearest_client(
+                        scored, clients, request.client_columns.reference
+                    )
+                )
             )
         )
+        regions = (
+            _regions(resolve(self.project_root, request.territory_geojson), prospects)
+            if request.territory_geojson
+            else None
+        )
+        if regions is not None:
+            prospects = prospects.with_columns(pl.Series(REGION, regions))
         return scored, clients, swapped, prospects
 
     def build(self, request: GoldPackageRequest) -> GoldPackageResult:
@@ -195,10 +217,12 @@ class FileGoldPackage:
 
         bottler_csv = bottler_dir / names["bottler_csv"]
         ko_csv = ko_dir / names["ko_csv"]
-        prospects.select(bottler_columns(scored.columns, ref_cols)).write_csv(
-            bottler_csv, include_bom=True
+        has_region = REGION in prospects.columns
+        write_csv(
+            prospects.select(bottler_columns(scored.columns, ref_cols, has_region)),
+            bottler_csv,
         )
-        prospects.select(KO_COLUMNS).write_csv(ko_csv, include_bom=True)
+        write_csv(prospects.select(ko_columns(has_region)), ko_csv)
 
         city = request.client_columns.city
         clients_by_city = {
@@ -241,7 +265,9 @@ class FileGoldPackage:
                 .item()
             ),
             ko_column_names=ko_written.collect_schema().names(),
-            bottler_columns=len(bottler_columns(scored.columns, ref_cols)),
+            bottler_columns=len(
+                bottler_columns(scored.columns, ref_cols, REGION in prospects.columns)
+            ),
             prioritized=int(prospects.get_column("prioridad").is_not_null().sum()),
             client_coordinates_swapped=swapped,
             figures=figures,
@@ -291,6 +317,78 @@ class FileGoldPackage:
         ko_map, bottler_map = self._write_maps(request, prospects, clients)
         logger.info("Maps rebuilt for %s in %s", request.run_name, request.out_dir)
         return [str(ko_map), str(bottler_map)]
+
+
+def flat_text(value: str | None) -> str | None:
+    """One CSV field that never needs quotes: no comma, double quote or line break.
+
+    Dataplor sends JSON inside some columns (historical_*_scores, place_attributes).
+    Quoted and with doubled quotes it is valid CSV, but LibreOffice and Excel with a
+    Spanish locale often split it at every comma and shift the rest of the row (the
+    hours ended up under other headers). JSON becomes readable flat text; free text
+    keeps its words with commas turned into " - " and double quotes into '.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if text[:1] in "{[":
+        try:
+            parsed: Any = json.loads(text)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, dict):
+            if parsed and all(v is True for v in parsed.values()):
+                # Attribute flags: only their names (environment_cozy | service_takeout)
+                text = " | ".join(str(k) for k in parsed)
+            else:
+                text = " | ".join(f"{k}: {v}" for k, v in parsed.items())
+        elif isinstance(parsed, list):
+            text = " | ".join(str(v) for v in parsed)
+    text = re.sub(r"[\r\n]+", " ", text).replace('"', "'")
+    text = re.sub(r"\s*,\s*", " - ", text)
+    # An empty text would be written as "" (quoted); an empty field reads the same
+    return text or None
+
+
+def write_csv(frame: pl.DataFrame, target: Path) -> None:
+    """CSV as the approved Golfo files: UTF-8 BOM, comma, CRLF.
+
+    Every text field goes through flat_text, so no field needs quotes and the file
+    opens column-aligned in Excel and LibreOffice whatever their import settings.
+    """
+    text = [c for c, t in frame.schema.items() if t == pl.Utf8]
+    clean = frame.with_columns(
+        pl.col(c).map_elements(flat_text, return_dtype=pl.Utf8, skip_nulls=True)
+        for c in text
+    )
+    clean.write_csv(
+        target, include_bom=True, line_terminator="\r\n", quote_style="necessary"
+    )
+
+
+def _regions(path: Path, prospects: pl.DataFrame) -> list[str | None] | None:
+    """Region of each prospect from the territory GeoJSON, or None without region names.
+
+    Only a GeoJSON whose features carry a region name gives the column (user decision
+    2026-11-17: "si no lo tienes no lo pongas"); a single unnamed polygon gives none.
+    """
+    if not path.is_file():
+        return None
+    data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    named = []
+    for feature in data.get("features", []):
+        props = feature.get("properties") or {}
+        key = next((k for k in REGION_KEYS if props.get(k)), None)
+        if key and feature.get("geometry"):
+            named.append((str(props[key]).strip(), shape(feature["geometry"])))
+    if not named:
+        return None
+    lat = prospects.get_column("latitude").cast(pl.Float64).to_list()
+    lon = prospects.get_column("longitude").cast(pl.Float64).to_list()
+    return [
+        next((name for name, geom in named if geom.covers(Point(b, a))), None)
+        for a, b in zip(lat, lon, strict=True)
+    ]
 
 
 def _territory(path: Path) -> list[list[list[float]]]:
