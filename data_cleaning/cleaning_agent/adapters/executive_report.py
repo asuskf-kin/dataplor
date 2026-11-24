@@ -3,7 +3,10 @@
 from pathlib import Path
 
 from cleaning_agent.adapters.brand import KinBrand
-from cleaning_agent.adapters.executive_report_builder import generate_executive_report
+from cleaning_agent.adapters.executive_report_builder import (
+    DATAMATCH_STEP,
+    generate_executive_report,
+)
 from cleaning_agent.adapters.filesystem import resolve
 from cleaning_agent.domain.models import ExecutiveReportOutcome
 
@@ -38,6 +41,10 @@ class FileExecutiveReport:
         correlation_id: str,
         out_dir: Path,
         xlsx_dir: Path,
+        known_clients: dict[str, str] | None = None,
+        known_step: str | None = None,
+        lodging_rentals: dict[str, str] | None = None,
+        upstream: list[tuple[str, int]] | None = None,
     ) -> ExecutiveReportOutcome:
         result = generate_executive_report(
             resolve(self.project_root, raw_csv),
@@ -51,6 +58,12 @@ class FileExecutiveReport:
             correlation_id=correlation_id,
             brand=self.brand,
             xlsx_dir=xlsx_dir,
+            known_clients=known_clients,
+            # With known clients the deliverable CSV is the prospects file itself
+            export_channel_csv=not known_clients,
+            known_step=known_step or DATAMATCH_STEP,
+            lodging_rentals=lodging_rentals,
+            upstream=upstream,
         )
         return ExecutiveReportOutcome(
             files=[str(f) for f in result.files], summary=result.summary

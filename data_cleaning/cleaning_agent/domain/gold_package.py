@@ -15,6 +15,7 @@ the deck. Files, maps and slides are written by the adapters.
 import re
 from typing import Any
 
+import numpy as np
 import polars as pl
 from unidecode import unidecode
 
@@ -108,6 +109,55 @@ def canonical_names(values: list[str]) -> dict[str, str]:
         clean = _REGION_AFFIXES.sub("", value.split(",")[-1].strip()).strip()
         best.setdefault(key, clean or value)
     return {value: best[_region_key(value) if value else ""] for value in counts}
+
+
+def _blank(column: str) -> pl.Expr:
+    return pl.col(column).cast(pl.Utf8).str.strip_chars().fill_null("") == ""
+
+
+def fill_place_from_nearest(prospects: pl.DataFrame, column: str) -> pl.DataFrame:
+    """Give a point without ``column`` (city, state) the value of its nearest named point.
+
+    User, 2026-11-23: "si no tiene ciudad búscala por su lat long y agrégala; si no
+    encuentras, dale el punto a la ciudad más cercana". Without a geocoding service
+    (coordinates never leave the machine), the nearest prospect that does carry the
+    name answers both: a point inside a city has a named neighbour metres away, and an
+    isolated one goes to the closest city. Rows without valid coordinates keep the gap.
+    """
+    if column not in prospects.columns:
+        return prospects
+    lat = pl.col("latitude").cast(pl.Float64, strict=False)
+    lon = pl.col("longitude").cast(pl.Float64, strict=False)
+    indexed = prospects.with_row_index("_row").with_columns(
+        _lat=lat, _lon=lon, _blank=_blank(column)
+    )
+    valid = pl.col("_lat").is_between(-90, 90) & pl.col("_lon").is_between(-180, 180)
+    named = indexed.filter(~pl.col("_blank") & valid)
+    missing = indexed.filter(pl.col("_blank") & valid)
+    if named.is_empty() or missing.is_empty():
+        return prospects
+    ref_lat = np.radians(named["_lat"].to_numpy())
+    ref_lon = np.radians(named["_lon"].to_numpy())
+    names = named[column].cast(pl.Utf8).to_list()
+    filled: dict[int, str] = {}
+    for row, a, b in zip(
+        missing["_row"].to_list(),
+        np.radians(missing["_lat"].to_numpy()),
+        np.radians(missing["_lon"].to_numpy()),
+        strict=True,
+    ):
+        # Haversine without the constant factor: only the argmin matters
+        h = np.sin((ref_lat - a) / 2) ** 2 + np.cos(a) * np.cos(ref_lat) * np.sin((ref_lon - b) / 2) ** 2
+        filled[int(row)] = names[int(np.argmin(h))]
+    patch = pl.DataFrame(
+        {"_row": list(filled), "_fill": list(filled.values())},
+        schema={"_row": pl.UInt32, "_fill": pl.Utf8},
+    )
+    return (
+        indexed.join(patch, on="_row", how="left")
+        .with_columns(pl.coalesce(pl.col("_fill"), pl.col(column).cast(pl.Utf8)).alias(column))
+        .drop("_row", "_lat", "_lon", "_blank", "_fill")
+    )
 
 
 def period_label(period: str) -> str:

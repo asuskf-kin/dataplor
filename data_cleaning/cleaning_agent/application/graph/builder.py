@@ -9,7 +9,8 @@ start -> intake* (país ISO 2, bottler, tradicional|moderno, off|on premise|ambo
           [no: front_dataplor* -> fetch_front]
           -> check_patterns -> [update_patterns* if missing or > 6 months] -> load_input
       -> run_module (x N) -> finalize -> approve_output* --reject--> END
-      -> publish -> executive_report -> ask_datamatch*
+      -> publish -> executive_report -> silver/gold
+      -> ask_validate_clients* [sí: validate_clients -> confirm_clients* -> upload_clients]
            sí: front_datamatch* -> qa_explore -> choose_thresholds* -> qa_run --+
            no: ------------------------------------------------------------------+
       -> confirm_upload* -> [upload] -> build_lineage -> END
@@ -30,11 +31,13 @@ from typing import Literal
 
 from langgraph.graph import END, START, StateGraph
 
+from cleaning_agent.application.graph import clients_nodes as clients
 from cleaning_agent.application.graph import delivery_nodes as delivery
 from cleaning_agent.application.graph import franchise_nodes as franchise
 from cleaning_agent.application.graph import gold_nodes as gold
 from cleaning_agent.application.graph import nodes
 from cleaning_agent.application.graph import priorizacion_nodes as prioritization
+from cleaning_agent.application.graph import prospection_qa_nodes as pqa
 from cleaning_agent.application.graph import warehouse_nodes as warehouse
 from cleaning_agent.application.graph.nodes import Dependencies
 from cleaning_agent.application.graph.progress import tracked
@@ -196,12 +199,26 @@ def _after_front_datamatch(max_attempts: int) -> Callable[[CleaningState], str]:
     return route
 
 
+def _after_ask_validate_clients(max_attempts: int) -> Callable[[CleaningState], str]:
+    def route(state: CleaningState) -> str:
+        if state.get("errors"):
+            return _retry_or_give_up(state, max_attempts)
+        return clients.after_ask_validate_clients(state)
+
+    return route
+
+
 def _after_upload_priorizacion(state: CleaningState) -> str:
     route = _after_layer_upload(state)
     # The gold package needs the client base and matches of Datamatch
     if route == "continue" and prioritization.without_prospects(state):
         return "lineage"
     return route
+
+
+def _after_prepare_prospection_qa(state: CleaningState) -> str:
+    info = state.get("prospection_qa") or {}
+    return "skip" if info.get("skipped") else "review"
 
 
 def give_up(state: CleaningState) -> nodes.Update:
@@ -252,12 +269,20 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     _add(g, "upload_gold", warehouse.make_upload_layer(deps, Layer.GOLD))
     _add(g, "publish", nodes.make_publish(deps))
     _add(g, "executive_report", delivery.make_executive_report(deps))
+    _add(g, "ask_validate_clients", clients.make_ask_validate_clients(deps))
+    _add(g, "validate_clients", clients.make_validate_clients(deps))
+    _add(g, "confirm_clients", warehouse.make_confirm_layer(deps, Layer.BRONZE))
+    _add(g, "upload_clients", warehouse.make_upload_layer(deps, Layer.BRONZE))
     _add(g, "front_datamatch", delivery.make_front_datamatch(deps))
     _add(g, "fetch_datamatch", warehouse.make_fetch_datamatch(deps))
     _add(g, "stage_datamatch_step", warehouse.make_stage_datamatch_step(deps))
     _add(g, "confirm_datamatch_step", warehouse.make_confirm_layer(deps, Layer.SILVER))
     _add(g, "upload_datamatch_step", warehouse.make_upload_layer(deps, Layer.SILVER))
     _add(g, "next_datamatch_step", warehouse.make_next_datamatch_step(deps))
+    _add(g, "prepare_prospection_qa", pqa.make_prepare_prospection_qa(deps))
+    _add(g, "prospection_qa_review", pqa.make_prospection_qa_review(deps))
+    _add(g, "build_prospection_qa", pqa.make_build_prospection_qa(deps))
+    _add(g, "confirm_false_negatives", pqa.confirm_false_negatives)
     _add(g, "stage_prospects", warehouse.make_stage_prospects(deps))
     _add(g, "confirm_prospects", warehouse.make_confirm_layer(deps, Layer.GOLD))
     _add(g, "upload_prospects", warehouse.make_upload_layer(deps, Layer.GOLD))
@@ -417,7 +442,7 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     g.add_conditional_edges(
         "stage_gold",
         _after_stage_gold,
-        {"continue": "confirm_gold", "skip": "front_datamatch"},
+        {"continue": "confirm_gold", "skip": "ask_validate_clients"},
     )
     g.add_conditional_edges(
         "confirm_gold",
@@ -431,8 +456,38 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
     )
     g.add_conditional_edges(
         "upload_gold",
+        _after_layer_upload_to("ask_validate_clients"),
+        {"continue": "ask_validate_clients", "ask_again": "confirm_gold", "failed": END},
+    )
+    # Paso 1 bottler (user, 2026-11-23): validate the client base once, before the
+    # first Datamatch step; the validated CSV becomes that step's client base
+    g.add_conditional_edges(
+        "ask_validate_clients",
+        _after_ask_validate_clients(deps.max_attempts),
+        {
+            "validate": "validate_clients",
+            "skip": "front_datamatch",
+            "ask_again": "ask_validate_clients",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "validate_clients", _after_step, {"continue": "confirm_clients", "failed": END}
+    )
+    g.add_conditional_edges(
+        "confirm_clients",
+        _after_layer_answer_to("upload", deps.max_attempts),
+        {
+            "upload": "upload_clients",
+            "stop": END,
+            "ask_again": "confirm_clients",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "upload_clients",
         _after_layer_upload_to("front_datamatch"),
-        {"continue": "front_datamatch", "ask_again": "confirm_gold", "failed": END},
+        {"continue": "front_datamatch", "ask_again": "confirm_clients", "failed": END},
     )
     # The local CSV and the executive report (funnel, PDF, HTML) are built before the
     # silver approval so the person validates everything together (user, 2026-11-10).
@@ -485,8 +540,38 @@ def build_graph(deps: Dependencies) -> CleaningGraph:
         _after_datamatch_loop(deps.max_attempts),
         {
             "iterate": "front_datamatch",
-            "done": "stage_prospects",
+            "done": "prepare_prospection_qa",
             "ask_again": "next_datamatch_step",
+            "give_up": "give_up",
+        },
+    )
+    # QA de prospección after the last step (user, 2026-11-23): Claude Code reviews the
+    # categories and the market, the person decides on the false negatives
+    g.add_conditional_edges(
+        "prepare_prospection_qa",
+        _after_prepare_prospection_qa,
+        {"review": "prospection_qa_review", "skip": "stage_prospects"},
+    )
+    g.add_conditional_edges(
+        "prospection_qa_review",
+        _after_answer("build_prospection_qa", deps.max_attempts),
+        {
+            "build_prospection_qa": "build_prospection_qa",
+            "ask_again": "prospection_qa_review",
+            "give_up": "give_up",
+        },
+    )
+    g.add_conditional_edges(
+        "build_prospection_qa",
+        pqa.after_build_prospection_qa,
+        {"confirm": "confirm_false_negatives", "continue": "stage_prospects"},
+    )
+    g.add_conditional_edges(
+        "confirm_false_negatives",
+        _after_answer("stage_prospects", deps.max_attempts),
+        {
+            "stage_prospects": "stage_prospects",
+            "ask_again": "confirm_false_negatives",
             "give_up": "give_up",
         },
     )

@@ -25,9 +25,14 @@ from cleaning_agent.application.graph.nodes import (
     _validate,
     layer_dir,
     record_stage,
+    upstream_of,
 )
 from cleaning_agent.application.graph.state import CleaningState
-from cleaning_agent.domain.datamatch_steps import prospects_qa, step_folder
+from cleaning_agent.domain.datamatch_steps import (
+    LODGING_RENTAL_REGEX,
+    prospects_qa,
+    step_folder,
+)
 from cleaning_agent.domain.franchises import mark_franchises
 from cleaning_agent.domain.lineage import ArtifactRef, now_iso
 from cleaning_agent.domain.models import (
@@ -35,6 +40,7 @@ from cleaning_agent.domain.models import (
     DatamatchInputs,
     DatamatchLoopDecision,
     FrontResult,
+    ProspectsResult,
     UploadDecision,
     UploadResult,
     blob_location,
@@ -425,6 +431,10 @@ def check_remote(deps: Dependencies, name: str, path: str) -> list[str]:
     return _check_remote(deps, name, path)
 
 
+def mirror_dir(deps: Dependencies, container: str, blob: str) -> Path:
+    return _mirror_dir(deps, container, blob)
+
+
 def make_fetch_datamatch(deps: Dependencies) -> NodeFn:
     def fetch_datamatch(state: CleaningState) -> Update:
         """Done when the Datamatch result and the client base are in the local mirror
@@ -760,7 +770,8 @@ def make_stage_datamatch_step(deps: Dependencies) -> NodeFn:
                 # The step's Excel report lives in the date folder (user, 2026-11-11)
                 deps.mirror_root / base,
                 folder,
-                deps.datamatch_step_threshold,
+                # The person may pick another one on the step's threshold page
+                inputs.umbral or deps.datamatch_step_threshold,
                 history,
                 state["run_id"],
             )
@@ -778,7 +789,12 @@ def make_stage_datamatch_step(deps: Dependencies) -> NodeFn:
                 deps.lineage.describe(inputs.datamatch_file),
                 deps.lineage.describe(inputs.clients_file),
             ],
-            [deps.lineage.describe(path) for path in result.files],
+            # The step's _qa.html is itself the QA sidecar: it gets no metadata of its own
+            [
+                deps.lineage.describe(path)
+                for path in result.files
+                if not path.endswith("_qa.html")
+            ],
             {k: v for k, v in result.summary.items() if not k.endswith("_file")},
         )
         sidecars = [str(s) for s in lineage.get("sidecars", [])]
@@ -815,7 +831,13 @@ def make_stage_datamatch_step(deps: Dependencies) -> NodeFn:
                         "umbral_limpieza",
                         "cuadra",
                     )
-                },
+                }
+                | {
+                    k: (result.summary.get("calidad") or {}).get(k)
+                    for k in ("qa_ok", "checks", "alertas", "distancia_mediana_m")
+                    if k in (result.summary.get("calidad") or {})
+                }
+                | {"umbral_html": result.summary.get("umbral_html")},
             },
         }
 
@@ -870,7 +892,7 @@ def make_next_datamatch_step(deps: Dependencies) -> NodeFn:
     return next_datamatch_step
 
 
-def _loop_match_files(deps: Dependencies, state: CleaningState) -> list[str]:
+def loop_match_files(deps: Dependencies, state: CleaningState) -> list[str]:
     """Matches file of every Datamatch step, in the silver qa_process mirror."""
     base = layer_prefix(
         Layer.SILVER,
@@ -891,10 +913,114 @@ def _loop_match_files(deps: Dependencies, state: CleaningState) -> list[str]:
     ]
 
 
-def _cleaned_dataplor(state: CleaningState) -> str:
+def cleaned_dataplor(state: CleaningState) -> str:
     """The silver CSV without franchises (the executive report's channel CSV)."""
     csvs = [str(f) for f in state.get("report_files", []) if str(f).endswith(".csv")]
     return csvs[0] if csvs else str(state.get("output_path", ""))
+
+
+def _prospects_report(
+    deps: Dependencies, state: CleaningState, out_dir: Path, result: ProspectsResult
+) -> tuple[list[str], list[str]]:
+    """Executive report updated with the Datamatch step, next to the prospects in gold.
+
+    User, 2026-11-23: "primero actualiza el reporte" before the prospects go up. A report
+    failure never blocks the prospects: it becomes a warning.
+    """
+    inputs = state.get("inputs") or {}
+    excluded = ", ".join(str(s) for s in state.get("excluded_states") or [])
+    known = dict(result.known_points)
+    # Clients the prospection QA found among the prospects: they are bottler clients too,
+    # so they count in the same funnel step as the Datamatch matches
+    known |= {i: "QA de prospección (falso negativo)" for i in result.false_negatives}
+    step = None
+    if result.out_of_territory:
+        # Counted with the Datamatch step, under a wider name (user, 2026-11-23)
+        known |= {i: f"{excluded} (fuera de territorio)" for i in result.out_of_territory}
+        step = f"10 · Clientes del bottler (Datamatch) y fuera de territorio ({excluded})"
+    try:
+        outcome = deps.executive_report.generate(
+            str(inputs["raw_csv"]),
+            str(inputs.get("output_csv") or state["output_path"]),
+            state.get("country", ""),
+            state.get("bottler", ""),
+            state.get("premise", ""),
+            state["run_id"],
+            out_dir,
+            out_dir,
+            known_clients=known,
+            known_step=step,
+            lodging_rentals=dict(result.lodging_rentals),
+            upstream=upstream_of(state),
+        )
+    except (RuntimeError, OSError, ValueError, KeyError) as exc:
+        _logger(state).warning("Executive report with Datamatch failed: %s", exc)
+        return [], [f"Reporte ejecutivo con Datamatch no generado: {exc}"]
+    return [str(f) for f in outcome.files], []
+
+
+def _close_cycle_report(
+    deps: Dependencies, state: CleaningState, result: ProspectsResult, started: str
+) -> tuple[dict[str, object] | None, Update, list[str]]:
+    """Cycle Excel rewritten with the rented flats as its closing row, its lineage and
+    where it goes (its silver qa_process folder). A failure only warns."""
+    history = [dict(h) for h in state.get("datamatch_history") or []]
+    base = layer_prefix(
+        Layer.SILVER,
+        state.get("country", ""),
+        state.get("bottler", ""),
+        str(state.get("qa_process_date", "")),
+        deps.qa_process_template,
+    )
+    client = str((state.get("datamatch") or {}).get("client_name", ""))
+    try:
+        files = deps.datamatch_steps.close_cycle_report(
+            deps.mirror_root / base,
+            client,
+            history,
+            len(result.lodging_rentals),
+            result.rows_out,
+        )
+    except (ValueError, OSError, RuntimeError, pl.exceptions.PolarsError) as exc:
+        _logger(state).warning("Cycle Excel with the rented flats failed: %s", exc)
+        return None, {}, [f"Excel del ciclo sin la fila de alojamiento: {exc}"]
+    if not files:
+        return None, {}, []
+    record = record_stage(
+        deps,
+        state,
+        "datamatch_cierre",
+        "Datamatch: cierre del ciclo (alojamiento tipo Airbnb)",
+        started,
+        [ArtifactRef(path=result.file, rows=result.rows_out)],
+        [deps.lineage.describe(f) for f in files],
+        {
+            "alojamiento_eliminados": len(result.lodging_rentals),
+            "prospectos": result.rows_out,
+        },
+    )
+    extra: dict[str, object] = {
+        "files": [*files, *(str(s) for s in record.get("sidecars", []))],
+        "container": deps.dwh_container,
+        "blob_prefix": base,
+    }
+    return extra, record, []
+
+
+def false_negatives_to_remove(state: CleaningState) -> dict[str, str]:
+    """Dataplor id -> reason of the prospection-QA false negatives the person chose to
+    remove (empty when the QA did not run, found none or the person kept them)."""
+    info = state.get("prospection_qa") or {}
+    if not info.get("remove"):
+        return {}
+    prepared = info.get("prepared") or {}
+    return {str(k): str(v) for k, v in dict(prepared.get("mistake_ids") or {}).items()}
+
+
+def prospection_qa_upload(state: CleaningState) -> list[dict[str, object]]:
+    """The prospection-QA report's destination, added to the prospects' extra uploads."""
+    upload = (state.get("prospection_qa") or {}).get("upload")
+    return [dict(upload)] if isinstance(upload, dict) else []
 
 
 def make_stage_prospects(deps: Dependencies) -> NodeFn:
@@ -910,18 +1036,30 @@ def make_stage_prospects(deps: Dependencies) -> NodeFn:
         label = pdv_label(state.get("channel"), state.get("premise"))
         name = f"prospects_{label}_{folder(country)}_{folder(bottler)}_{today}"
         local_dir = deps.mirror_root / prefix
-        cleaned = _cleaned_dataplor(state)
-        match_files = _loop_match_files(deps, state)
+        cleaned = cleaned_dataplor(state)
+        match_files = loop_match_files(deps, state)
+        excluded = [str(s) for s in state.get("excluded_states") or []]
         started = now_iso()
         try:
             result = deps.datamatch_steps.build_prospects(
-                cleaned, match_files, local_dir / f"{name}.csv"
+                cleaned,
+                match_files,
+                local_dir / f"{name}.csv",
+                excluded or None,
+                false_negatives_to_remove(state) or None,
             )
         except (ValueError, OSError, RuntimeError, pl.exceptions.PolarsError) as exc:
             _logger(state).error("Prospects failed: %s", exc)
             return {"status": "failed", "error": f"Prospectos: {exc}"}
         qa = prospects_qa(
-            result.rows_in, result.known_ids, result.known_in_file, result.rows_out
+            result.rows_in,
+            result.known_ids,
+            result.known_in_file,
+            result.rows_out,
+            len(result.out_of_territory),
+            ", ".join(excluded),
+            len(result.lodging_rentals),
+            len(result.false_negatives),
         )
         if not qa["qa_ok"]:
             failed = [c["check"] for c in qa["checks"] if not c["ok"]]
@@ -939,6 +1077,13 @@ def make_stage_prospects(deps: Dependencies) -> NodeFn:
             "alertas": [c for c in qa["checks"] if not c["ok"]],
             "POR VERIFICAR": [],
             "insumos": match_files,
+            "provincias_excluidas": excluded,
+            # The rule itself travels with the file: reviewers see what was removed
+            "regex_alojamiento": LODGING_RENTAL_REGEX,
+            "archivo_alojamiento": Path(result.lodging_file).name
+            if result.lodging_file
+            else "",
+            "falsos_negativos_qa": len(result.false_negatives),
             "pasos_datamatch": [
                 h.get("paso") for h in state.get("datamatch_history") or []
             ],
@@ -969,14 +1114,37 @@ def make_stage_prospects(deps: Dependencies) -> NodeFn:
             [ArtifactRef(path=result.file, rows=result.rows_out, blob=destination)],
             {k: v for k, v in qa.items() if k != "checks"},
         )
+        report_files, warnings = _prospects_report(deps, state, local_dir, result)
+        cycle, cycle_lineage, cycle_warnings = _close_cycle_report(
+            deps, state, result, started
+        )
+        warnings += cycle_warnings
         return {
             **lineage,
+            # Both stages append to the run's lineage and sidecars
+            "lineage": [*lineage.get("lineage", []), *cycle_lineage.get("lineage", [])],
+            "sidecars": [
+                *lineage.get("sidecars", []),
+                *cycle_lineage.get("sidecars", []),
+            ],
+            # New prospects = new priorización input: an answer from an earlier run would
+            # otherwise override the defaults with the old prospects blob and folder
+            "priorizacion": None,
+            **({"warnings": warnings} if warnings else {}),
             "pending_upload": {
                 "layer": Layer.GOLD.value,
-                "files": [result.file, *sidecars],
+                # The removed Airbnb / apartment points travel with the prospects
+                "files": [
+                    result.file,
+                    *sidecars,
+                    *([result.lodging_file] if result.lodging_file else []),
+                    *report_files,
+                ],
                 "container": deps.dwh_container,
                 "blob_prefix": prefix,
                 "copies": [],
+                # The cycle Excel goes back to its silver qa_process folder
+                "extra": [*([cycle] if cycle else []), *prospection_qa_upload(state)],
                 "qa": dict(qa),
             },
         }

@@ -23,14 +23,14 @@
   ],
   "outputs": [
     {
-      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\dataplor_cleaned_2.csv",
+      "path": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv",
       "rows": null,
       "bytes": 315749543,
       "sha256": "22cfa34415b9619e8c2a3d445d01a158125286f847e07422b1b616cf286c02cb",
       "blob": null
     },
     {
-      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\json_config.json",
+      "path": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/json_config.json",
       "rows": null,
       "bytes": 1217,
       "sha256": "3667dc3cc43e90f869be5cc07c77af92f59a8d60b7a70f90105c06f919e5b1c3",
@@ -38,10 +38,10 @@
     }
   ],
   "metrics": {
-    "front_metadata_json": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\json_config.json"
+    "front_metadata_json": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/json_config.json"
   },
   "archivo": {
-    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\prospection-datacleaning\\andina_ARG_20261110\\dataplor_cleaned\\dataplor_cleaned_2.csv",
+    "path": "prospection-datacleaning/andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv",
     "bytes": 315749543,
     "sha256": "22cfa34415b9619e8c2a3d445d01a158125286f847e07422b1b616cf286c02cb"
   }

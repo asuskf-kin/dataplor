@@ -27,7 +27,8 @@ from cleaning_agent.application.graph.nodes import (
     record_stage,
 )
 from cleaning_agent.application.graph.state import CleaningState
-from cleaning_agent.application.graph.warehouse_nodes import _cleaned_dataplor
+from cleaning_agent.application.graph.warehouse_nodes import cleaned_dataplor
+from cleaning_agent.domain.datamatch_steps import LODGING_FILE_SUFFIX
 from cleaning_agent.domain.lineage import ArtifactRef, now_iso
 from cleaning_agent.domain.models import (
     PriorizacionDecision,
@@ -77,7 +78,12 @@ def _output_dir(deps: Dependencies, state: CleaningState, today: str) -> str:
 def _default_input(deps: Dependencies, state: CleaningState) -> str | None:
     if without_prospects(state):
         return _cleaned_blob(deps, state)
-    csvs = [u for u in state.get("uploaded") or [] if u.endswith(".csv")]
+    # The prospects CSV, not the removed-rentals list that is uploaded with it
+    csvs = [
+        u
+        for u in state.get("uploaded") or []
+        if u.endswith(".csv") and not u.endswith(f"{LODGING_FILE_SUFFIX}.csv")
+    ]
     return csvs[-1] if csvs else None
 
 
@@ -90,7 +96,7 @@ def _cleaned_blob(deps: Dependencies, state: CleaningState) -> str | None:
 
     "uploaded" only keeps the last upload (gold), so the blob comes from the mirror:
     data/<blob> is the local copy of <dwh container>/<blob>."""
-    cleaned = Path(_cleaned_dataplor(state))
+    cleaned = Path(cleaned_dataplor(state))
     try:
         blob = cleaned.relative_to(deps.mirror_root).as_posix()
     except ValueError:

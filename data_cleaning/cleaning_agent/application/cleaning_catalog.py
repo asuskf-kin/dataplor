@@ -19,6 +19,10 @@ from cleaning_agent.domain.cleaning.crowded_property import filter_crowded_same_
 from cleaning_agent.domain.cleaning.dedup import deduplicate_records_with_audit
 from cleaning_agent.domain.cleaning.final_regex import final_keyword_exclusion
 from cleaning_agent.domain.cleaning.geo_dedup import balltree_spatial_deduplication
+from cleaning_agent.domain.cleaning.lodging_filter import (
+    LODGING_MODULE,
+    remove_lodging_rentals,
+)
 from cleaning_agent.domain.cleaning.nightlife_filter import keep_nightlife_businesses
 from cleaning_agent.domain.cleaning.normalize import normalize_names
 
@@ -102,7 +106,7 @@ NIGHTLIFE_DEFAULTS: dict[str, Any] = {
 def catalog_for(
     country: str, nightlife: Mapping[str, Any] | None = None
 ) -> dict[int, CleaningModule]:
-    """The seven cleaning modules with their parameters for one country."""
+    """The eight cleaning modules with their parameters for one country."""
     chain_regex = chain_regex_for(country)
     night = {**NIGHTLIFE_DEFAULTS, **(nightlife or {})}
     return {
@@ -172,11 +176,17 @@ def catalog_for(
                     df, threshold=4, radius_m=100.0, items_to_track=items
                 ),
             ),
+            CleaningModule(
+                LODGING_MODULE,
+                "Module 7: Airbnb / Lodging Rentals",
+                "07_airbnb_lodging_removed",
+                remove_lodging_rentals,
+            ),
         )
     }
 
 
-MODULE_IDS = (0, 1, 2, 3, 4, 5, 6)
+MODULE_IDS = (0, 1, 2, 3, 4, 5, 6, 7)
 # Shown in the plan before the country's patterns exist (they may be created later)
 MODULE_NAMES = {
     0: "Module 0: Nightlife Filter",
@@ -186,7 +196,12 @@ MODULE_NAMES = {
     4: "Module 4: Hours & Fuzzy",
     5: "Module 5: Final Regex",
     6: "Module 6: Crowded Property",
+    7: "Module 7: Airbnb / Lodging Rentals",
 }
+# Always run, whatever the plan asks (user, 2026-11-23: Airbnb is a cleaning step)
+MANDATORY_MODULES = (LODGING_MODULE,)
+# Airbnb runs last, after modules 0-6 (user, 2026-11-23: "un paso más para que sea 8"):
+# the rented flats the final regex already removed stay counted in module 5
 
 
 def build_module_plan(
@@ -204,8 +219,13 @@ def build_module_plan(
     unknown = sorted(set(requested) - valid)
     if unknown:
         raise ValueError(f"Unknown modules {unknown}. Valid: {sorted(valid)}")
-    modules = sorted(set(requested))
+    if not requested:
+        raise ValueError("The plan must run at least one module")
+    modules = sorted(set(requested) | (set(MANDATORY_MODULES) & valid))
     notes: list[str] = []
+    missing = sorted((set(MANDATORY_MODULES) & valid) - set(requested))
+    if missing:
+        notes.append(f"Module(s) {missing} always run (Airbnb / lodging rentals)")
     # With the nightlife filter every record is a bar, so the Final Regex would only
     # remove bars by keyword (same rule main.py applied)
     if NIGHTLIFE_MODULE in modules and FINAL_REGEX_MODULE in modules:

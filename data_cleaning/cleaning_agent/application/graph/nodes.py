@@ -30,6 +30,7 @@ from cleaning_agent.application.cleaning_catalog import (
 from cleaning_agent.application.graph.state import CleaningState
 from cleaning_agent.application.ports import (
     AuditPort,
+    ClientValidationPort,
     DatamatchQAPort,
     DatamatchStepPort,
     DatasetPort,
@@ -40,6 +41,7 @@ from cleaning_agent.application.ports import (
     PatternsPort,
     PrefilterPort,
     PriorizacionPort,
+    ProspectionQaPort,
     StoragePort,
 )
 from cleaning_agent.domain.cleaning.step_metrics import analyze_step_drop
@@ -65,6 +67,7 @@ from cleaning_agent.domain.models import (
     raw_blob_location,
 )
 from cleaning_agent.domain.patterns_policy import needs_update
+from cleaning_agent.domain.upstream import paso0_counts
 from cleaning_agent.domain.warehouse import Layer, layer_prefix
 from cleaning_agent.observability import CorrelationAdapter
 
@@ -108,6 +111,10 @@ class Dependencies:
     modules_for: Callable[[str], Mapping[int, CleaningModule]] = catalog_for
     supported_countries: Callable[[], list[str]] = supported_countries
     front_url: str = ""
+    # Paso 1 bottler (validar clientes antes del Datamatch); None = no se ofrece
+    client_validation: ClientValidationPort | None = None
+    # QA de la prospección tras el Datamatch; None = el paso no corre
+    prospection_qa: ProspectionQaPort | None = None
     # Default container ONLY for the raw Dataplor (not for GeoJSON, clients or uploads)
     raw_container: str = "dataplorraw"
     # Default container of the Front step's result (user rule)
@@ -135,6 +142,9 @@ class Dependencies:
     # Gold package (deck cover and contacts; client base columns it reads)
     gold_client_label: str = "Coca-Cola {bottler}"
     gold_contacts: tuple[str, ...] = ()
+    # Registro de prospección: who answers for it (config.yaml registro; empty = POR COMPLETAR)
+    registry_responsible: str = ""
+    registry_registered_by: str = ""
     gold_client_columns: Mapping[str, Any] = field(default_factory=dict)
     # Gold folder of the prospects (user, 2026-11-11): entity prospecting-data
     prospects_template: str = "{layer}/ko/{pais}/{bottler}/prospecting-data/{fecha}"
@@ -783,7 +793,7 @@ def make_publish(deps: Dependencies) -> NodeFn:
             dropped = df.filter(pl.col("es_franquicia") == "Sí").with_columns(
                 pl.lit("Franquicia (review Claude)").alias("drop_reason")
             )
-            deps.datasets.save_dropped(df, kept, "07_franchise_review", dropped)
+            deps.datasets.save_dropped(df, kept, "08_franchise_review", dropped)
             final = deps.datasets.publish(
                 kept, output_csv.replace(".csv", "_sin_franquicias.csv")
             )
@@ -894,6 +904,18 @@ def make_update_patterns(deps: Dependencies) -> NodeFn:
         }
 
     return update_patterns
+
+
+def upstream_of(state: CleaningState) -> list[tuple[str, int]]:
+    """Paso 0 of the executive report: raw -> bronze -> Front -> pipeline universe."""
+    raw = (state.get("prefilter") or {}).get("counts")
+    counts = (
+        {str(k): int(v) for k, v in raw.items() if isinstance(v, int)}
+        if isinstance(raw, dict)
+        else None
+    )
+    front_rows = state.get("input_rows")
+    return paso0_counts(counts, int(front_rows) if front_rows else None)
 
 
 def layer_dir(deps: Dependencies, state: CleaningState, layer: Layer) -> Path:

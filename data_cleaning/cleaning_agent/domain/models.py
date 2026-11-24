@@ -7,7 +7,7 @@ checkpointer and the ``interrupt`` payloads must stay serialisable.
 import re
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, ClassVar, Self
+from typing import Any, ClassVar, Literal, Self
 
 from pydantic import (
     BaseModel,
@@ -263,6 +263,61 @@ class DatamatchChoice(_Answer):
     run_datamatch: bool
 
 
+class ClientChannel(StrEnum):
+    """Canal de la base de clientes a validar; ``todos`` no filtra (default)."""
+
+    TODOS = "todos"
+    TRADICIONAL = "tradicional"
+    MODERNO = "moderno"
+    AMBOS = "ambos"
+
+
+class ClientValidationAnswer(_Answer):
+    """HITL: base de clientes bottler + territorio del bottler (paso 1, obligatorio).
+
+    User, 2026-11-23: "la limpieza de clientes bottler es obligatoria; pide el geojson o
+    búscalo en el DWH para cruzar con la localidad o donde los bottlers trabajan".
+    ``validate_clients`` stays for the payload's shape but only ``True`` is accepted.
+    """
+
+    validate_clients: bool = True
+    clients_file: str = Field("", description="Base de clientes bottler (CSV)")
+    canal: ClientChannel = ClientChannel.TODOS
+    territorio_geojson: str = Field(
+        "", description="GeoJSON del territorio donde trabaja el bottler"
+    )
+
+    @model_validator(mode="after")
+    def _needs_files(self) -> Self:
+        if not self.validate_clients:
+            raise ValueError(
+                "la validación de clientes bottler es obligatoria antes del Datamatch"
+            )
+        for name, value, suffixes in (
+            ("clients_file", self.clients_file, (".csv",)),
+            ("territorio_geojson", self.territorio_geojson, (".geojson", ".json")),
+        ):
+            try:
+                _check_path(value, suffixes)
+            except ValueError as exc:
+                raise ValueError(f"{name}: {exc}") from exc
+        return self
+
+
+class ClientValidationResult(BaseModel):
+    """Lo que deja la validación en el espejo local (sin filas de clientes)."""
+
+    csv: str
+    metadata: str
+    qa: str
+    # Carpeta DWH relativa (bronze/ko/{pais}/{bottler}/clients/{fecha})
+    blob_prefix: str
+    rows_read: int
+    rows_valid: int
+    qa_ok: bool
+    summary: dict[str, Any] = Field(default_factory=dict)
+
+
 class DatamatchInputs(_Answer):
     """Files coming back from the Front (Datamatch is run in the Kin web app)."""
 
@@ -272,6 +327,21 @@ class DatamatchInputs(_Answer):
     # JSON of the Front step (parameters of that Datamatch run); its file name names
     # the step folder in silver (paso1.json -> .../qa_process/<fecha>/paso1/)
     step_json: str = Field("", description="Front JSON of this Datamatch step")
+    # Cleanup threshold chosen on the step's threshold page; None = config default
+    umbral: float | None = Field(
+        None, gt=0, lt=1, description="total_score above which a client is found"
+    )
+    # Also a match: a client whose Dataplor candidate is this close, whatever its score
+    distancia_match_m: float | None = Field(
+        None, gt=0, le=250, description="metres; None = only the score decides"
+    )
+    # Only the distance rule finds clients in this step (the score does not)
+    solo_distancia: bool = False
+    # The Front ran this step with an older base: drop result rows whose client is not
+    # in clients_file (counted and flagged in the step QA) instead of failing the step
+    filtrar_a_base: bool = False
+    # Free note for the cycle log ("enfoque en nombres"); empty = taken from the JSON
+    enfoque: str = Field("", max_length=200)
     # Filled from the run context, not asked again
     country: str = Field("", max_length=2)
 
@@ -279,6 +349,12 @@ class DatamatchInputs(_Answer):
     @classmethod
     def _step_json(cls, value: str) -> str:
         return _check_path(value, (".json",)) if value else value
+
+    @model_validator(mode="after")
+    def _distance_only(self) -> DatamatchInputs:
+        if self.solo_distancia and self.distancia_match_m is None:
+            raise ValueError("solo_distancia needs distancia_match_m")
+        return self
 
     @field_validator("datamatch_file")
     @classmethod
@@ -354,6 +430,101 @@ class ProspectsResult(BaseModel):
     known_in_file: int
     rows_in: int
     rows_out: int
+    # Dataplor id -> the loop step that matched it first (for the executive report)
+    known_points: dict[str, str] = Field(default_factory=dict)
+    # Dataplor id -> province, for the points dropped as out of territory
+    out_of_territory: dict[str, str] = Field(default_factory=dict)
+    # Dataplor id -> the word that made it a rented flat (Airbnb / departamento)
+    lodging_rentals: dict[str, str] = Field(default_factory=dict)
+    # CSV with the removed rented flats ("" = none removed)
+    lodging_file: str = ""
+    # Dataplor id -> reason, for the false negatives of the prospection QA the person
+    # chose to remove (they are bottler clients the Datamatch did not match)
+    false_negatives: dict[str, str] = Field(default_factory=dict)
+
+
+class CategoryMapping(_Answer):
+    """One Dataplor category and its closest category in the client base."""
+
+    prospection_category: str = Field(min_length=1, max_length=200)
+    client_category: str = Field("", max_length=200)
+    confidence: Literal["High", "Medium", "Low"]
+    notes: str = Field("", max_length=500)
+
+
+class NonBeverageCategory(_Answer):
+    """A Dataplor category that clearly does not sell drinks."""
+
+    category: str = Field(min_length=1, max_length=200)
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class BenchmarkSource(_Answer):
+    title: str = Field(min_length=1, max_length=300)
+    url: str = Field(pattern=r"^https://\S+$", max_length=1000)
+
+
+class MarketBenchmark(_Answer):
+    """Coca-Cola penetration in the market, found by Claude Code (web search)."""
+
+    country: str = Field(min_length=2, max_length=100)
+    # Share of outlets / volume share found; None = no reliable figure
+    penetration_pct: float | None = Field(None, ge=0, le=100)
+    penetration_text: str = Field("", max_length=1000)
+    paragraph: str = Field(min_length=1, max_length=MAX_NOTE_LENGTH)
+    sources: list[BenchmarkSource] = Field(default_factory=list, max_length=20)
+
+
+class ProspectionQaReview(_Answer):
+    """Claude Code's part of the prospection QA: category crosswalk, non-beverage
+    categories and the market benchmark."""
+
+    category_mapping: list[CategoryMapping] = Field(default_factory=list, max_length=5000)
+    non_beverage: list[NonBeverageCategory] = Field(default_factory=list, max_length=5000)
+    benchmark: MarketBenchmark | None = None
+    # A long crosswalk does not fit in a CLI answer: the same fields in a JSON file
+    review_file: str | None = None
+
+    @field_validator("review_file")
+    @classmethod
+    def _json_file(cls, value: str | None) -> str | None:
+        return None if value is None else _check_path(value, (".json",))
+
+
+class FalseNegativesDecision(_Answer):
+    """The person's call on the false negatives found by the prospection QA."""
+
+    remove: bool
+    note: str | None = Field(None, max_length=MAX_NOTE_LENGTH)
+
+
+class ProspectionQaPrepared(BaseModel):
+    """First half of the prospection QA (before Claude Code's review)."""
+
+    out_dir: str
+    match: int
+    no_match: int
+    clients: int
+    mistakes: int
+    by_reason: dict[str, int]
+    prospection_category_col: str = ""
+    client_category_col: str = ""
+    # JSON with the unique categories of both bases, for Claude Code to map
+    categories_file: str
+    # Local only: client names and coordinates
+    mistakes_file: str
+    # Dataplor id -> match reason, for the person's decision and the removal
+    mistake_ids: dict[str, str] = Field(default_factory=dict)
+
+
+class ProspectionQaResult(BaseModel):
+    """Files and figures of the finished prospection QA."""
+
+    # Aggregate report (counts, rates, ids only): uploadable to silver qa_process
+    report: str
+    # Local mirror only (names / coordinates): never in an upload list
+    local_files: list[str]
+    summary: dict[str, Any]
 
 
 class DatamatchLoopDecision(_Answer):
@@ -445,6 +616,7 @@ class GoldPackageRequest(BaseModel):
             "deck": f"prospecting_{self.bottler}_{self.country_name}_{self.period}.pptx",
             "ko_csv": f"dataplor_on_premise_priority_{base}_ko.csv",
             "bottler_csv": f"dataplor_on_premise_priority_{base}_bottler.csv",
+            "full_csv": f"dataplor_on_premise_priority_{base}_completa.csv",
             "ko_map": f"prospection_map_{self.bottler}_ko.html",
             "bottler_map": f"prospection_map_{self.bottler}_bottler.html",
         }

@@ -48,7 +48,17 @@ Aceptación: setup desde cero OK · test pasa · una sesión nueva responde "có
 ```
 Estados: `not_started → active → passing | blocked`. Solo uno `active`. El agente **no** marca `passing` por su
 cuenta: lo marca la verificación. Política de paso [L08 pass-gate]: se ejercitó el flujo, hay evidencia registrada,
-no hay error bloqueante en la ruta probada y la app no queda rota.
+no hay error bloqueante en la ruta probada y la app no queda rota. **POR VERIFICAR**: esa política de paso ya no
+aparece en el texto de L08 (2026-11-23); quizá siga en su carpeta `code/`.
+
+Reglas para el archivo raíz [L08] (https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/lectures/lecture-08-why-feature-lists-are-harness-primitives/index.md, 2026-11-23):
+```
+## Feature List Rules
+- Archivo: <docs/features.md | feature_list.json>; es la única fuente de "qué falta"
+- Una sola feature active a la vez
+- El comando de verificación debe pasar antes de marcar passing; passing no vuelve atrás
+- No cambies estados a mano: los actualiza el script de verificación
+```
 
 ## T5. Entrada y salida de sesión [L05, L12]
 ```

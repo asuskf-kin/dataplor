@@ -4,7 +4,7 @@ The graph depends only on these. ``adapters/`` implements them against the file
 system; tests swap in in-memory fakes, so the whole flow runs without real data.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -12,6 +12,7 @@ import polars as pl
 
 from cleaning_agent.domain.lineage import ArtifactRef, StageRecord
 from cleaning_agent.domain.models import (
+    ClientValidationResult,
     DatamatchInputs,
     DatamatchStepResult,
     ExecutiveReportOutcome,
@@ -21,6 +22,9 @@ from cleaning_agent.domain.models import (
     PrefilterResult,
     PriorizacionResult,
     PriorizacionRun,
+    ProspectionQaPrepared,
+    ProspectionQaResult,
+    ProspectionQaReview,
     ProspectsResult,
     QAExploreResult,
     QARunResult,
@@ -124,6 +128,8 @@ class LineagePort(Protocol):
 
     def write_document(self, document: dict[str, Any], path: Path) -> str: ...
 
+    def read_decisions(self, path: Path) -> list[dict[str, Any]]: ...
+
 
 class ExecutiveReportPort(Protocol):
     """Executive report of the cleaning (HTML, PDF, Excel), formerly report.ipynb."""
@@ -138,6 +144,10 @@ class ExecutiveReportPort(Protocol):
         correlation_id: str,
         out_dir: Path,
         xlsx_dir: Path,
+        known_clients: dict[str, str] | None = None,
+        known_step: str | None = None,
+        lodging_rentals: dict[str, str] | None = None,
+        upstream: list[tuple[str, int]] | None = None,
     ) -> ExecutiveReportOutcome: ...
 
 
@@ -188,8 +198,22 @@ class DatamatchStepPort(Protocol):
     ) -> DatamatchStepResult: ...
 
     def build_prospects(
-        self, cleaned_file: str, match_files: list[str], target: Path
+        self,
+        cleaned_file: str,
+        match_files: list[str],
+        target: Path,
+        excluded_states: list[str] | None = None,
+        false_negatives: Mapping[str, str] | None = None,
     ) -> ProspectsResult: ...
+
+    def close_cycle_report(
+        self,
+        report_dir: Path,
+        client_name: str,
+        history: list[dict[str, Any]],
+        lodging_removed: int,
+        prospects_left: int,
+    ) -> list[str]: ...
 
 
 class GoldPackagePort(Protocol):
@@ -210,3 +234,46 @@ class PatternsPort(Protocol):
     def status(self, country: str) -> PatternsStatus: ...
 
     def reload(self, country: str) -> int: ...
+
+
+class ClientValidationPort(Protocol):
+    """Paso 1 bottler: valida la base de clientes antes del Datamatch (canal, coordenadas
+    dentro del país, coordenada única, no aislado) y deja CSV + sidecars en el espejo."""
+
+    def validate(
+        self,
+        src: str,
+        country: str,
+        bottler: str,
+        canal: str,
+        fecha: str,
+        run_id: str,
+        territory: str | None = None,
+    ) -> ClientValidationResult: ...
+
+    def supports(self, country: str) -> bool: ...
+
+
+class ProspectionQaPort(Protocol):
+    """QA de la prospección tras el ciclo de Datamatch: falsos negativos, categorías,
+    mapas y reporte. ``prepare`` antes de la revisión de Claude Code, ``build`` después."""
+
+    def prepare(
+        self,
+        cleaned_file: str,
+        match_files: list[str],
+        excluded_states: list[str],
+        clients_file: str,
+        client_cols: Mapping[str, str],
+        dataplor_cols: Mapping[str, str],
+        out_dir: Path,
+    ) -> ProspectionQaPrepared: ...
+
+    def build(
+        self,
+        prepared: ProspectionQaPrepared,
+        review: ProspectionQaReview,
+        client: str,
+        country: str,
+        dataplor_cols: Mapping[str, str],
+    ) -> ProspectionQaResult: ...

@@ -17,7 +17,6 @@ the row).
 
 import json
 import logging
-import re
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +29,7 @@ from shapely.geometry import Point, shape
 from sklearn.neighbors import BallTree
 
 from cleaning_agent.adapters.brand import KinBrand
+from cleaning_agent.adapters.excel_csv import csv_separator, write_csv
 from cleaning_agent.adapters.filesystem import resolve
 from cleaning_agent.adapters.prospecting_deck import render_deck
 from cleaning_agent.adapters.prospection_map import render_map
@@ -223,6 +223,11 @@ class FileGoldPackage:
             bottler_csv,
         )
         write_csv(prospects.select(ko_columns(has_region)), ko_csv)
+        # The whole priorización, every column (user, 2026-11-23: "me falta un csv con
+        # las priorizaciones completas, no hablo de bottler ni de KO"). Names and
+        # coordinates: package root only, never results_ko
+        full_csv = out / names["full_csv"]
+        write_csv(scored, full_csv)
 
         city = request.client_columns.city
         clients_by_city = {
@@ -251,15 +256,21 @@ class FileGoldPackage:
             f"{figures['hm_total']:,}",
             f"{figures['hm_inside']:,}",
         )
-        ko_written = pl.scan_csv(ko_csv, infer_schema=False)
+        # Read back with the separator it was written with: with the wrong one the KO
+        # privacy check would see a single column and pass without checking anything
+        ko_written = pl.scan_csv(
+            ko_csv, infer_schema=False, separator=csv_separator(ko_csv)
+        )
         return GoldPackageResult(
-            root=[str(xlsx), str(deck)],
+            root=[str(xlsx), str(deck), str(full_csv)],
             ko=[str(ko_csv), str(ko_map)],
             bottler=[str(bottler_csv), str(bottler_map)],
             rows=scored.height,
             ko_rows=int(ko_written.select(pl.len()).collect().item()),
             bottler_rows=int(
-                pl.scan_csv(bottler_csv, infer_schema=False)
+                pl.scan_csv(
+                    bottler_csv, infer_schema=False, separator=csv_separator(bottler_csv)
+                )
                 .select(pl.len())
                 .collect()
                 .item()
@@ -317,53 +328,6 @@ class FileGoldPackage:
         ko_map, bottler_map = self._write_maps(request, prospects, clients)
         logger.info("Maps rebuilt for %s in %s", request.run_name, request.out_dir)
         return [str(ko_map), str(bottler_map)]
-
-
-def flat_text(value: str | None) -> str | None:
-    """One CSV field that never needs quotes: no comma, double quote or line break.
-
-    Dataplor sends JSON inside some columns (historical_*_scores, place_attributes).
-    Quoted and with doubled quotes it is valid CSV, but LibreOffice and Excel with a
-    Spanish locale often split it at every comma and shift the rest of the row (the
-    hours ended up under other headers). JSON becomes readable flat text; free text
-    keeps its words with commas turned into " - " and double quotes into '.
-    """
-    if value is None:
-        return None
-    text = value.strip()
-    if text[:1] in "{[":
-        try:
-            parsed: Any = json.loads(text)
-        except ValueError:
-            parsed = None
-        if isinstance(parsed, dict):
-            if parsed and all(v is True for v in parsed.values()):
-                # Attribute flags: only their names (environment_cozy | service_takeout)
-                text = " | ".join(str(k) for k in parsed)
-            else:
-                text = " | ".join(f"{k}: {v}" for k, v in parsed.items())
-        elif isinstance(parsed, list):
-            text = " | ".join(str(v) for v in parsed)
-    text = re.sub(r"[\r\n]+", " ", text).replace('"', "'")
-    text = re.sub(r"\s*,\s*", " - ", text)
-    # An empty text would be written as "" (quoted); an empty field reads the same
-    return text or None
-
-
-def write_csv(frame: pl.DataFrame, target: Path) -> None:
-    """CSV as the approved Golfo files: UTF-8 BOM, comma, CRLF.
-
-    Every text field goes through flat_text, so no field needs quotes and the file
-    opens column-aligned in Excel and LibreOffice whatever their import settings.
-    """
-    text = [c for c, t in frame.schema.items() if t == pl.Utf8]
-    clean = frame.with_columns(
-        pl.col(c).map_elements(flat_text, return_dtype=pl.Utf8, skip_nulls=True)
-        for c in text
-    )
-    clean.write_csv(
-        target, include_bom=True, line_terminator="\r\n", quote_style="necessary"
-    )
 
 
 def _regions(path: Path, prospects: pl.DataFrame) -> list[str | None] | None:

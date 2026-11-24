@@ -8,7 +8,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 
 from cleaning_agent.application.graph.builder import build_graph
 from cleaning_agent.application.graph.nodes import Dependencies
-from cleaning_agent.application.graph.warehouse_nodes import _cleaned_dataplor
+from cleaning_agent.application.graph.warehouse_nodes import cleaned_dataplor
 from cleaning_agent.entrypoints.cli import run_resume as cli_resume
 from tests.fakes import (
     CLIENTS_FILE,
@@ -81,7 +81,9 @@ def test_loop_done_sends_the_prospects_to_gold_then_priorizacion():
     assert prefix.startswith("gold/ko/mx/femsa/prospecting-data/")
     name = Path(view["files"][0]).name
     assert name.startswith("prospects_pdv_trad_on_mx_femsa_") and name.endswith(".csv")
-    assert view["qa"]["qa_ok"] and view["qa"]["filas_conservadas"] == 90
+    # 10 known clients and 1 rented flat leave; the flat's CSV goes up with them
+    assert view["qa"]["qa_ok"] and view["qa"]["filas_conservadas"] == 89
+    assert any(f.endswith("_eliminados_alojamiento_airbnb.csv") for f in view["files"])
     _, match_files, _ = deps.datamatch_steps.prospects[-1]
     assert len(match_files) == 1 and match_files[0].endswith(
         "datamatch_matches_femsa_paso1.csv"
@@ -369,7 +371,7 @@ def test_skipping_datamatch_goes_to_priorizacion_on_the_cleaned_csv():
     deps.executive_report.with_csv = True
     app = _to_front_datamatch(deps)
     state = app.get_state({"configurable": {"thread_id": "t1"}}).values
-    cleaned = Path(_cleaned_dataplor(state)).name  # silver CSV of the executive report
+    cleaned = Path(cleaned_dataplor(state)).name  # silver CSV of the executive report
 
     asked = cli_resume(app, "t1", {"skip": True})
 
@@ -412,3 +414,15 @@ def test_skip_must_be_true_to_skip_datamatch():
     view = cli_resume(app, "t1", {"skip": "no"})
 
     assert _kind(view) == "front_datamatch" and view["interrupt"]["errors"]
+
+
+def test_every_gold_package_sidecar_carries_the_vtm_section():
+    from cleaning_agent.domain.registry import REGISTRY_FIELDS
+
+    _, deps, view = _to_gold_package(FakeStorage())
+    gold = [m for m in deps.staging.metadata if m.get("analisis") == "paquete_gold_prospeccion"]
+    # one per package file: xlsx + deck, KO csv + map, BOTTLER csv + map
+    assert len(gold) == 6
+    assert all(tuple(m["vtm"]) == REGISTRY_FIELDS for m in gold)
+    assert {m["vtm"]["High & Moderate No Match"] for m in gold} == {3}
+    assert view["interrupt"]["qa"]["qa_ok"]

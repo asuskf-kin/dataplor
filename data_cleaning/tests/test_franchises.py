@@ -78,7 +78,7 @@ def test_removed_franchises_produce_the_sin_franquicias_deliverable():
         datasets.published[WITHOUT].height
         == datasets.published[PATHS["output_csv"]].height - 1
     )
-    assert "07_franchise_review" in datasets.drops
+    assert "08_franchise_review" in datasets.drops
     assert view["interrupt"]["kind"] == "front_datamatch"
 
 

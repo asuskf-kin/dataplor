@@ -111,7 +111,7 @@ def test_prefilter_modes_run_to_publication(mode):
     assert _kind(view) == "collect_inputs"
     view = run_resume(app, "t1", {})  # accept the defaults
     assert _kind(view) == "confirm_plan"
-    assert [m["id"] for m in view["interrupt"]["modules"]] == [1, 2]
+    assert [m["id"] for m in view["interrupt"]["modules"]] == [1, 2, 7]
     view = run_resume(app, "t1", {"approved": True})
     assert _kind(view) == "confirm_layer_upload"
     qa = view["interrupt"]["qa"]  # silver validation shows the cleaning QA
@@ -126,7 +126,7 @@ def test_prefilter_modes_run_to_publication(mode):
     assert qa["filas_conservadas"] == 2  # module 1 drops OXXO, module 2 drops one more
     assert list(qa["eliminadas_por_motivo"].values()) == [1, 1]
     assert datasets.published[PATHS["output_csv"]].height == 2
-    assert datasets.drops == ["01_fake", "02_fake"]
+    assert datasets.drops == ["01_fake", "02_fake", "07_fake"]
     assert datasets.cleared == 1
     assert audit.finished and audit.steps == ["MODULE 1 (Fake 1: chains)"]
     assert Path(view["result"]["report_path"]).parent.parts[:2] == ("data", "silver")
@@ -147,7 +147,7 @@ def test_no_cleaning_sends_the_raw_dataplor_to_the_pipeline():
     assert _kind(view) == "front_datamatch"
     assert datasets.published[PATHS["output_csv"]].height == 3
     assert prefilter.calls == []
-    assert view["result"]["modules"] == [2]
+    assert view["result"]["modules"] == [2, 7]
 
 
 def test_invalid_answers_are_reasked_then_the_run_is_cancelled():
@@ -214,7 +214,7 @@ def test_nightlife_plan_skips_final_regex():
     view = run_resume(app, "t1", {"approved": True, "modules": [0, 5, 1]})
     view = run_resume(app, "t1", {"approved": True})
 
-    assert view["result"]["modules"] == [0, 1]
+    assert view["result"]["modules"] == [0, 1, 7]
 
 
 def test_declined_silver_stays_local_after_the_report_is_shown():

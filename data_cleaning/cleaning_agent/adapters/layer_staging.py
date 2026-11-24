@@ -15,18 +15,22 @@ from typing import Any
 import polars as pl
 
 from cleaning_agent.adapters.brand import LOGO_FORMAL_LIGHT, PAGE_CSS, KinBrand
+from cleaning_agent.adapters.dwh_paths import DwhPathResolver
+from cleaning_agent.adapters.excel_csv import csv_separator
 
 
 class FileLayerStaging:
-    def __init__(self, brand: KinBrand) -> None:
+    def __init__(self, brand: KinBrand, resolver: DwhPathResolver | None = None) -> None:
         self.brand = brand
+        # Sidecars travel with the file: they name warehouse addresses, not local paths
+        self.resolver = resolver
 
     def count_rows(self, path: str) -> int:
         # Lazy scans: count a ~2 GB file without loading it in memory
         frame = (
             pl.scan_parquet(path)
             if path.lower().endswith(".parquet")
-            else pl.scan_csv(path, infer_schema=False)
+            else pl.scan_csv(path, infer_schema=False, separator=csv_separator(path))
         )
         return int(frame.select(pl.len()).collect().item())
 
@@ -35,7 +39,7 @@ class FileLayerStaging:
         lazy = (
             pl.scan_parquet(path)
             if path.endswith(".parquet")
-            else pl.scan_csv(path, infer_schema=False)
+            else pl.scan_csv(path, infer_schema=False, separator=csv_separator(path))
         )
         return lazy.collect_schema().names()
 
@@ -46,7 +50,9 @@ class FileLayerStaging:
             return str(target)
         if target.suffix == ".parquet" and Path(source).suffix.lower() == ".csv":
             # Streaming conversion; text columns stay text (as in the raw Dataplor)
-            pl.scan_csv(source, infer_schema=False).sink_parquet(
+            pl.scan_csv(
+                source, infer_schema=False, separator=csv_separator(source)
+            ).sink_parquet(
                 target, compression="snappy"
             )
         else:
@@ -73,6 +79,8 @@ class FileLayerStaging:
         self, metadata: dict[str, Any], json_path: Path, html_path: Path
     ) -> list[str]:
         json_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.resolver is not None:
+            metadata = self.resolver.portable(metadata)
         json_path.write_text(
             json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
             encoding="utf-8",
@@ -156,7 +164,6 @@ def qa_html(meta: dict[str, Any], brand: KinBrand) -> str:
                 ("Proceso", meta.get("proceso")),
                 ("Corrida", meta.get("run_id")),
                 ("Versión del código", meta.get("code_version")),
-                ("Espejo local", meta.get("espejo_local")),
             ]
         )
     }</table></section>

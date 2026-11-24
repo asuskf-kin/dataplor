@@ -13,6 +13,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 LINEAGE_FILE = "dataplor_pipeline_metadata.json"
+# Human decisions of the run and why (user, 2026-11-23: "en el linaje agregar
+# todo lo que hicimos y por qué"); one JSON list next to PROGRESS.md
+DECISIONS_FILE = "decisiones.json"
 
 
 def now_iso() -> str:
@@ -42,14 +45,18 @@ class StageRecord(BaseModel):
 
 
 def build_lineage_document(
-    records: list[StageRecord], run: dict[str, Any], to_verify: list[str]
+    records: list[StageRecord],
+    run: dict[str, Any],
+    to_verify: list[str],
+    decisions: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The final lineage JSON (gold). Pure: no I/O, easy to test."""
     ordered = sorted(records, key=lambda r: r.started_at)
     return {
         "leeme": (
             "Linaje de la corrida del agente de limpieza Dataplor. 'linaje' lista las etapas en "
-            "orden con sus entradas y salidas (ruta, filas, bytes, sha256, blob)."
+            "orden con sus entradas y salidas (ruta, filas, bytes, sha256, blob); "
+            "'decisiones' dice qué decidió la persona en cada punto y por qué."
         ),
         "corrida": run,
         "linaje": [
@@ -65,5 +72,6 @@ def build_lineage_document(
             }
             for position, record in enumerate(ordered, start=1)
         ],
+        "decisiones": list(decisions or []),
         "por_verificar": to_verify,
     }

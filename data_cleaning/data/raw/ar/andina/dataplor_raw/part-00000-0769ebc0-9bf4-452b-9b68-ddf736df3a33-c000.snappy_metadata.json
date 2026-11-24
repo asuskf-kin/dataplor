@@ -16,7 +16,7 @@
   ],
   "outputs": [
     {
-      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+      "path": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
       "rows": null,
       "bytes": 1149025124,
       "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a",
@@ -27,7 +27,7 @@
     "files": 1
   },
   "archivo": {
-    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\dataplor_raw\\part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
+    "path": "dataplorraw/dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-00000-0769ebc0-9bf4-452b-9b68-ddf736df3a33-c000.snappy.parquet",
     "bytes": 1149025124,
     "sha256": "875701dd85878e54ca35a55aca32b043a44c5b0e881343bdd6ab6e729eac728a"
   }

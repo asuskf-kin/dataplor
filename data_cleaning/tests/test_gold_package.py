@@ -12,16 +12,14 @@ from openpyxl import load_workbook
 from pptx import Presentation
 
 from cleaning_agent.adapters.brand import BUNDLED_ASSETS_DIR, KinBrand
-from cleaning_agent.adapters.gold_package import (
-    FileGoldPackage,
-    GoldPackageError,
-    flat_text,
-)
+from cleaning_agent.adapters.excel_csv import flat_text
+from cleaning_agent.adapters.gold_package import FileGoldPackage, GoldPackageError
 from cleaning_agent.adapters.prospection_map import map_prospects
 from cleaning_agent.domain.gold_package import (
     KO_COLUMNS,
     canonical_names,
     coordinates_swapped,
+    fill_place_from_nearest,
     package_qa,
     period_label,
     priority_label,
@@ -161,11 +159,19 @@ def test_package_has_ko_bottler_excel_maps_and_deck(
         and result.prioritized == 40
     )
     ko = pl.read_csv(
-        out / "results_ko" / request_.names()["ko_csv"], infer_schema=False
+        out / "results_ko" / request_.names()["ko_csv"], infer_schema=False, separator=","
     )
     assert tuple(ko.columns) == KO_COLUMNS
+    # The privacy check sees the real KO columns, not one header read with ";"
+    assert tuple(result.ko_column_names) == KO_COLUMNS
+    # The whole priorización goes to the package root, never to results_ko
+    full = out / request_.names()["full_csv"]
+    assert str(full) in result.root and full.name.endswith("_completa.csv")
+    scored = pl.read_csv(tmp_path / request_.scored_file, infer_schema=False)
+    written = pl.read_csv(full, infer_schema=False)
+    assert written.columns == scored.columns and written.height == scored.height
     bottler = pl.read_csv(
-        out / "results_bottler" / request_.names()["bottler_csv"], infer_schema=False
+        out / "results_bottler" / request_.names()["bottler_csv"], infer_schema=False, separator=","
     )
     assert bottler.columns[:4] == [
         "poi_ref",
@@ -249,6 +255,7 @@ def test_swapped_client_coordinates_are_detected_and_fixed(
     bottler = pl.read_csv(
         request_.out_dir / "results_bottler" / request_.names()["bottler_csv"],
         infer_schema=False,
+        separator=",",
     )
     first = bottler.filter(pl.col("dataplor_id") == "dp0").row(0, named=True)
     assert first["area"] == "dentro" and first["ref_pos_id_cercano"] == "c1"
@@ -283,17 +290,41 @@ def test_client_base_without_the_configured_columns_stops(
         FileGoldPackage(tmp_path, BRAND, TEMPLATE).build(request_)
 
 
-def test_map_leaves_out_prospects_without_place_or_score():
+def test_map_draws_every_prospect_it_can_place():
     frame = pl.DataFrame(
         {
-            "city": ["Ciudad A", "", None, "Ciudad B", "Ciudad C"],
-            "state": ["Provincia X", "Provincia X", "Provincia X", None, "Provincia X"],
-            "weighted_combined_score": ["0.5", "0.5", "0.5", "0.5", "0"],
+            "city": ["Ciudad A", "", None, "Ciudad B", "Ciudad C", "Ciudad D", "Ciudad E"],
+            "state": ["Provincia X"] * 3 + [None] + ["Provincia Y"] * 3,
+            "latitude": ["-34.60", "-34.61", "-31.40", "-31.41", "-38.0", "-38.0", None],
+            "longitude": ["-58.40", "-58.41", "-64.18", "-64.19", "-57.5", "-57.5", "-58.4"],
+            "weighted_combined_score": ["0.5", "0.5", "0.5", "0.5", "0", None, "0.5"],
         }
     )
     kept = map_prospects(frame)
-    # Only the first row has city, province and a score above 0
-    assert kept.get_column("city").to_list() == ["Ciudad A"]
+    # Same count as the prospects file, score 0 is drawn; a point without city takes
+    # the city of its nearest named point (row 1 next to A, row 2 next to B)
+    assert kept.get_column("city").to_list() == [
+        "Ciudad A", "Ciudad A", "Ciudad B", "Ciudad B", "Ciudad C"
+    ]
+    assert kept.get_column("state").to_list()[3] == "Provincia X"
+
+
+def test_point_without_coordinates_keeps_the_missing_label():
+    frame = pl.DataFrame(
+        {
+            "city": ["Ciudad A", ""],
+            "state": ["Provincia X", ""],
+            "latitude": ["-34.6", "-34.6"],
+            "longitude": ["-58.4", "-58.4"],
+            "weighted_combined_score": ["0.5", "0.5"],
+        }
+    )
+    lonely = fill_place_from_nearest(frame.head(1).with_columns(pl.lit("").alias("city")), "city")
+    # No named neighbour at all: nothing to borrow, the gap stays for the map label
+    assert lonely.get_column("city").to_list() == [""]
+    assert fill_place_from_nearest(frame, "state").get_column("state").to_list() == [
+        "Provincia X", "Provincia X"
+    ]
 
 
 def test_build_maps_rewrites_only_the_maps(
@@ -322,7 +353,7 @@ def test_build_maps_rewrites_only_the_maps(
 
 def _csv_rows(path: Path) -> tuple[bytes, list[list[str]]]:
     raw = path.read_bytes()
-    return raw, list(csv.reader(io.StringIO(raw.decode("utf-8-sig"), newline="")))
+    return raw, list(csv.reader(io.StringIO(raw.decode("utf-8-sig"), newline=""), delimiter=","))
 
 
 def test_csvs_keep_the_golfo_format_and_poi_ref(
@@ -395,9 +426,11 @@ def test_region_only_when_the_territory_names_its_regions(
     FileGoldPackage(tmp_path, BRAND, TEMPLATE).build(named)
     names = named.names()
     bottler = pl.read_csv(
-        named.out_dir / "results_bottler" / names["bottler_csv"], infer_schema=False
+        named.out_dir / "results_bottler" / names["bottler_csv"], infer_schema=False, separator=","
     )
-    ko = pl.read_csv(named.out_dir / "results_ko" / names["ko_csv"], infer_schema=False)
+    ko = pl.read_csv(
+        named.out_dir / "results_ko" / names["ko_csv"], infer_schema=False, separator=","
+    )
     assert set(bottler.get_column("region").to_list()) == {"Este", "Oeste"}
     assert ko.columns[ko.columns.index("area") + 1] == "region"
 

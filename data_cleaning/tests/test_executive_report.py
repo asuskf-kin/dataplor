@@ -390,3 +390,49 @@ def test_explicit_brand_is_used(paths: dict[str, Path]) -> None:
     result = _run(paths, brand=BRAND)
     html = next(f for f in result.files if f.suffix == ".html")
     assert BRAND.tokens_css in html.read_text(encoding="utf-8")
+
+
+def test_known_clients_close_the_funnel_as_step_9(paths: dict[str, Path]) -> None:
+    # p11/p12 are in the deliverable; p09 is a franchise already deleted by hand
+    known = {"p11": "paso1", "p12": "paso3", "p09": "paso2"}
+    result = _run(paths, known_clients=known, export_channel_csv=False)
+
+    s = result.summary
+    assert s["known_client_points"] == 2
+    assert s["final_rows"] == 8
+    assert s["reconciliation_gap"] == 0
+    assert s["warnings"] == 1  # p09 is not in the deliverable
+    assert not any(f.suffix == ".csv" for f in result.files)
+    html = next(f for f in result.files if f.suffix == ".html").read_text("utf-8")
+    assert "Ya son clientes del bottler (Datamatch)" in html
+    assert "Prospectos On Premise" in html
+
+
+def test_without_known_clients_the_report_is_unchanged(paths: dict[str, Path]) -> None:
+    s = _run(paths, known_clients={}).summary
+    assert s["known_client_points"] == 0
+    assert s["final_rows"] == 10
+
+
+def test_known_step_can_carry_a_wider_name(paths: dict[str, Path]) -> None:
+    step = "10 · Clientes del bottler (Datamatch) y fuera de territorio (X)"
+    result = _run(paths, known_clients={"p11": "paso1", "p12": "X (fuera de territorio)"}, known_step=step)
+    assert result.summary["final_rows"] == 8
+    html = next(f for f in result.files if f.suffix == ".html").read_text("utf-8")
+    assert "Clientes del bottler (Datamatch) y fuera de territorio (X)" in html
+
+
+def test_lodging_rentals_close_the_funnel_as_step_11(paths: dict[str, Path]) -> None:
+    # p11 is a known client: it is counted once, in step 9, not again as a rental
+    result = _run(
+        paths,
+        known_clients={"p11": "paso1"},
+        lodging_rentals={"p12": "departamento", "p11": "apart"},
+        export_channel_csv=False,
+    )
+
+    s = result.summary
+    assert (s["known_client_points"], s["lodging_rental_points"]) == (1, 1)
+    assert s["final_rows"] == 8 and s["reconciliation_gap"] == 0
+    html = next(f for f in result.files if f.suffix == ".html").read_text("utf-8")
+    assert "Alojamiento tipo Airbnb (red de seguridad tras el Datamatch)" in html

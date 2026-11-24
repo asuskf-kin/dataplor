@@ -41,15 +41,18 @@ agente por su cuenta**: cada `interrupt` es una decisión del usuario.
    | `intake` | **Primero, y en este orden**, una pregunta por campo de `interrupt.fields`: país (ISO 2, de `options`), bottler, tradicional o moderno, off premise / on premise / ambos, path del Dataplor raw. Usa AskUserQuestion donde hay `options` | `{"country": "mx", "bottler": "Femsa", "channel": "tradicional", "premise": "on_premise", "dataplor_raw": "data/raw/mx/femsa/part-*.parquet"}` |
    | `choose_cleaning` | AskUserQuestion: *"¿Va a limpiar el Dataplor?"* con las 3 opciones de `interrupt.options` (sí por distancia = GeoJSON, sí por client bottler, no) | `{"clean": true, "type": "distancia"}` · `{"clean": true, "type": "client_bottler"}` · `{"clean": false}` |
    | `collect_inputs` | Muestra `interrupt.defaults` (ya vienen del intake) y `interrupt.errors`. **distancia** → pide el GeoJSON del territorio; **client bottler** → el CSV de clientes (+ columnas lat/lon, radio); **no** → solo confirma la salida | Solo los campos que cambian, p.ej. `{"geojson": "data/raw/mx/femsa/territorio.geojson"}`; `{}` acepta los defaults |
-   | `confirm_plan` | Resume modo, rutas y `interrupt.modules` (y `notes`). AskUserQuestion: aprobar / cambiar módulos / cancelar | `{"approved": true, "modules": [1,2,3,4,5,6]}` o `{"approved": false, "note": "..."}` |
+   | `confirm_plan` | Resume modo, rutas y `interrupt.modules` (y `notes`). El módulo 7 (Airbnb / departamentos) corre siempre. AskUserQuestion: aprobar / cambiar módulos / cancelar | `{"approved": true, "modules": [1,2,3,4,5,6,7]}` o `{"approved": false, "note": "..."}` |
    | `confirm_layer_upload` | **Acción hacia afuera.** Capa (`layer`), archivos (`files`: dato + `_metadata.json` + `_qa.html`), QA (`qa`: filas leídas, eliminadas por motivo, checks) y destino (`defaults.container` / `defaults.blob_prefix`, p.ej. `prospecting-data` / `bronze/ko/ar/andina/dataplor/20261109/distance`, más la copia junto al raw en `dataplorraw`). Ofrece abrir `qa_html`. AskUserQuestion: subir / dejar solo en el espejo local | `{"approved": true}` (o con `container`/`blob_prefix` cambiados) · `{"approved": false}` (bronze: la corrida se detiene con todo en el espejo local) |
    | `front_dataplor` | El bronze ya se subió. Manda al usuario al Front (`front_url`) con los archivos de `bronze_files`; **él** continúa el proceso ahí. Espera y pide el path del resultado y el JSON de ese paso (blobs; contenedor por defecto `prospection-datacleaning`). No operes el Front por él | `{"result_file": "andina_ARG_20261110/dataplor_cleaned/dataplor_cleaned_2.csv", "metadata_json": "andina_ARG_20261110/dataplor_cleaned/json_config.json"}` |
    | `update_patterns` | Los patrones del país faltan o tienen > 6 meses. **Tú (Claude Code)** creas/actualizas `file` (CHAIN_REGEX de cadenas y franquicias reconocidas + `PATTERNS_UPDATED`), **muestras el diff** y esperas el OK del usuario | `{"approved": true}` tras su OK · `{"approved": false}` |
    | `franchise_review` | **Tú (Claude Code)** lees `candidates_file` (nombres + registros) y detectas franquicias que quedaron (OXXO, Costco, las más reconocidas del país). Muestra la lista al usuario | `{"flagged": [{"name": "<exacto>", "marca": "OXXO"}]}` o `{"flagged": []}` |
    | `confirm_franchises` | AskUserQuestion: marqué N registros (`by_brand`); ¿eliminarlos? (se marcan siempre; si se eliminan sale `_sin_franquicias.csv`) | `{"remove": true}` · `{"remove": false}` |
    | `confirm_layer_upload` (silver / gold / datamatch / prospectos / priorización / paquete gold) | **Acción hacia afuera.** Muestra `layer`, `files`, `destinations` y `extra_destinations` (archivos que van a subcarpetas: reporte del ciclo, `results_ko/`, `results_bottler/`), `qa` y `report_files`. Si `qa` trae alertas (p.ej. coordenadas de clientes intercambiadas), dilas. AskUserQuestion: subir / no subir | `{"approved": true, "replace": false}` · `{"approved": false}` · para reemplazar un blob existente solo si la persona lo pide: `"replace": true` |
+   | `validate_clients` | **Paso 1 bottler, obligatorio, una vez antes del primer Datamatch** (no se puede saltar; `validate_clients: false` vuelve con error). Confirma con la persona: la base (`defaults.clients_file`), el canal (`options`; `todos` por defecto: quien es cliente de otro canal sigue siendo cliente) y el **GeoJSON del territorio del bottler** (`defaults.territorio_geojson` y `territory_candidates`: el de la corrida o los de `prospection-datacleaning/global_geojson/` con el nombre del bottler). Si no hay candidato, pídelo; no lo inventes. Cada cliente queda con `territorio_bottler` (zona o "Fuera del territorio"; se marca, no se quita). Luego llega `confirm_layer_upload` de bronze con el QA: ofrece abrir el `_qa.html`. Al subir, el CSV validado queda como base por defecto del `front_datamatch` | `{"territorio_geojson": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson"}` · `{"clients_file": "drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv", "canal": "todos", "territorio_geojson": "..."}` |
    | `front_datamatch` | **Ciclo de Datamatch.** Dale el link `front_url` y el archivo a subir; **la persona** corre Datamatch en el Front con el JSON del paso. Pide: ruta del resultado (`final_output.csv`; rutas `silver/…` se leen de `prospecting-data`), base de clientes (en pasos 2+ el default es la base reducida del paso anterior) y el JSON del paso (`pasoN.json`). No operes el Front. Si la persona no va a hacer Datamatch, manda `{"skip": true}`: salta a priorización con el CSV limpio de silver (incluye clientes conocidos) y no se arma el paquete gold | `{"skip": true}` · `{"datamatch_file": "silver/ko/ar/andina/<…>/final_output.csv", "clients_file": "drop_zone/ko/…/clientes.csv", "client_name": "andina", "step_json": "C:/…/paso1.json"}` |
    | `datamatch_loop` | Tras subir el paso: muestra `last_step` (clientes inicio / con match / restantes) y `new_clients_file` (la base reducida para el Front). AskUserQuestion: otro paso / ya estamos, seguimos con la prospección | `{"done": false}` (otro paso) · `{"done": true}` (sigue a prospectos gold, priorización y paquete gold) |
+   | `prospection_qa_review` | **Tú (Claude Code)**, tras el último paso del Datamatch. Lee `categories_file` (solo nombres de categoría y conteos): cruza cada categoría Dataplor con la más parecida de la base de clientes (High/Medium/Low), marca solo las que claramente no venden bebidas y busca en la web la penetración de Coca-Cola en el país (busca con el nombre del país, nunca con datos de la corrida; cita fuentes https; sin cifra confiable, `penetration_pct: null`). Muéstrale al usuario el resumen | `{"category_mapping": [...], "non_beverage": [...], "benchmark": {"country": "Argentina", "penetration_pct": null, "penetration_text": "", "paragraph": "...", "sources": [...]}}` (respuesta grande: `--answer-file`) |
+   | `confirm_false_negatives` | **Decide la persona.** Muestra cuántos prospectos parecen clientes (`by_reason`), el `report` y ofrece abrir los mapas y el Excel locales (`local_files`, traen nombres de clientes: no se suben). AskUserQuestion: sacarlos de los prospectos / dejarlos | `{"remove": true}` · `{"remove": false}` |
    | `ask_priorizacion` | **Acción hacia afuera** (priorización escribe sus CSV en Azure). Muestra `configs` y `defaults`: `base_config` (YAML del país o `mexico_golfo.yaml` como donante), `period` AAAAMM, `input_blob` (los prospectos gold), `output_dir` (`bronze/ko/<pais>/<bottler>/providers/dataplor_on_premise_priority_<bottler>_<pais>/<fecha>`). Si un path no cuadra con el DWH, avísalo antes | `{"run": true}` · `{"run": true, "base_config": "<yaml>"}` · `{"run": false}` |
 
    Envía la respuesta (en Windows, si el JSON tiene comillas difíciles, escríbelo a un archivo del scratchpad y
@@ -61,6 +64,8 @@ agente por su cuenta**: cada `interrupt` es una decisión del usuario.
    vuelve a preguntar. Tras `agent.max_input_attempts` intentos el hilo se cancela.
 
 3. **Fin**: el último paso es `build_lineage` (linaje en `data/runs/<hilo>/dataplor_pipeline_metadata.json`).
+   Muéstrale a la persona el apartado `vtm` (16 campos para la bitácora del equipo) y dile cuáles
+   quedaron en `POR COMPLETAR`.
    Otros finales: `kept_local` (la persona no aprobó una subida), `cancelled`, `failed` (muestra `error`; el
    hilo queda guardado y se puede revisar con `status` o rehacer con `redo`).
 
@@ -72,6 +77,14 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
 
 ## Reglas
 
+- Reglas del 2026-11-23 (detalle en `DECISIONS.md`):
+  - **Airbnb** es el módulo 7 de la limpieza (siempre corre) y tiene su hoja "Airbnb" en el Excel del reporte
+    ejecutivo; no se presenta como parte del Datamatch (el cierre del Datamatch solo es red de seguridad).
+  - **Clientes bottler**: validación obligatoria con el GeoJSON del territorio del bottler.
+  - **Paso 0** del reporte: filas del raw, quitadas antes del Front, enviadas, eliminadas en el Front, recibidas.
+  - **Metadata**: solo direcciones del DWH (`<contenedor>/<blob>`), nunca rutas locales (`adapters/dwh_paths.py`).
+  - **Registro de prospección**: 16 campos fijos en cada sidecar gold y al inicio del linaje (`domain/registry.py`).
+
 - No inventes rutas ni contestes por el usuario. Si no sabe una ruta, ofrece `ls data/raw/<pais>/<bottler>/`.
 - Las corridas con el Parquet completo de MX tardan minutos: lanza `resume` en segundo plano si el usuario
   aprobó el plan y avísale cuando termine.
@@ -82,6 +95,16 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
 - Entregables HTML/PDF/imagen siguen la skill `brand-guidelines-kin` (fuentes, tokens y logo embebidos).
 - Para regenerar un paso tras un cambio de código: `uv run python -m cleaning_agent redo --thread <hilo> --after <nodo>`
   (solo los mapas: comando `maps`, abajo).
+- Cada paso del Datamatch deja además `..._umbral.html` (escenarios, curvas y pares más justos por umbral)
+  en el espejo local, **no se sube** (trae nombres de clientes). Ofrécelo junto al `_qa.html` en
+  `confirm_layer_upload` (`qa.umbral_html`). Si la persona elige otro umbral:
+  `uv run python -m cleaning_agent redo --thread <hilo> --after fetch_datamatch --umbral <valor>`.
+- Si un paso falla con "Counts do not add up", el Front corrió con otra base de clientes (p.ej. la de un
+  paso anterior). Muéstrale a la persona cuántos clientes sobran y pregúntale: repetir el paso en el Front,
+  o filtrar a la base del paso con
+  `uv run python -m cleaning_agent redo --thread <hilo> --after fetch_datamatch --datamatch '{"filtrar_a_base": true}'`.
+- Los prospectos gold quitan además los alojamientos tipo Airbnb / departamento (paso 10 del reporte,
+  regex en `docs/spec.md` §4.4).
 - El QA de Datamatch tarda ~1-2 min (`uv run --project ../../QA_datamatch`); avisa antes de lanzarlo.
 - Para una prueba rápida, `max_batches: 2` en el formulario de geojson/clientes.
 - El Dataplor raw se lee por defecto del blob `dataplorraw/...` (solo el raw). GeoJSON y clientes
@@ -95,11 +118,20 @@ Guía completa para el operador: `docs/runbook.md`; reglas: `docs/spec.md`; ruta
   `adapters/prospection_map.py`), solo en el mapa; el panel lateral sigue la marca Kin. Hexágonos H3 Auto (7/8/9
   según zoom) o fijos 7/8/9; **KO = solo hexágonos** (sin lat/lon de prospectos ni clientes, sin conteo de
   clientes), Bottler con puntos y clientes; color por score promedio (o n.º de prospectos), puntos por existencia o score,
-  leyenda flotante con rangos reales. Sin ciudad, provincia o score > 0 no se dibujan (los CSV los conservan).
+  leyenda flotante con rangos reales. Sin ciudad o provincia toma la del prospecto más cercano (offline, sin geocodificar); sin coordenadas o score no se dibuja (score 0 sí); los CSV quedan como vienen.
 - Si cambia el código del mapa y la persona quiere los mapas nuevos de una corrida ya hecha:
   `uv run python -m cleaning_agent maps --thread <hilo> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`
   (solo reescribe los dos HTML en el espejo local; para verlos, `preview-data` de `.claude/launch.json`). Subirlos
   a Azure es otra decisión: no se re-sube lo ya publicado; propón carpeta con fecha nueva y pide el OK.
+- Pasos de limpieza: los 8 vienen activos por defecto (módulos 1–6, 7 filtro de canal, 8 Airbnb = módulo 7, que
+  corre siempre). El módulo 0 (solo nocturnos) es opcional y quita el 5. En el reporte ejecutivo: Paso 0 = Dataplor
+  raw → Front, 1–6 módulos, 7 canal, 8 Airbnb (hoja "Airbnb"), 9 franquicias a mano, 10 Datamatch, 11 red de
+  seguridad Airbnb.
+- Si los `_metadata.json` del paquete gold de una corrida vieja no traen `vtm` ni QA (solo `run_id`, `stage`…):
+  `uv run python -m cleaning_agent sidecars --thread <hilo> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`
+  (añade `--clientes-crudos <contenedor>/<blob>` si la validación de clientes se hizo con `clean-clients`; pregúntale a
+  la persona cuál fue la base cruda, no la inventes). Solo reescribe metadata y QA en el espejo local; reemplazarlos en
+  Azure es otra subida que se pregunta (`"replace": true`).
 - CSV del paquete gold: UTF-8 con BOM, coma, CRLF y ningún campo entre comillas (`flat_text`: el JSON de Dataplor
   se aplana a `clave: valor | …`, comas del texto → ` - `, comillas → `'`, saltos de línea → espacio); así no se
   descuadra en LibreOffice/Excel. `poi_ref` (1…N por prioridad) cruza KO y BOTTLER. **KO**: `poi_ref` en lugar de

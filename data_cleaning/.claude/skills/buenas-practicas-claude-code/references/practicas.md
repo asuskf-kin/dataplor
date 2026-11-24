@@ -11,7 +11,8 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   - `/goal`, `/code-review`.
   - Effort.
 - **Garantía (el harness impone)**:
-  - Hooks `command`/`http` (con `onFailure: "block"` si también deben fallar cerrados).
+  - Hooks `command`/`http`/`mcp_tool` (con `onFailure: "block"` si también deben fallar cerrados; en `mcp_tool`
+    desde v2.1.328). (fuente: https://code.claude.com/docs/en/changelog.md v2.1.328, 2026-11-23)
   - Reglas `deny`.
   - Sandbox en modo estricto.
   - Managed settings.
@@ -47,6 +48,8 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
 - **Herramientas externas**: si tienen CLI (`gh`), basta con que esté instalada (y `--help` si Claude no la
   conoce). Si no la tienen, MCP (`claude mcp add --transport http <n> <url>`). Desactivar en `/mcp` los servidores
   que no se usan. Para lenguajes tipados, un plugin de code intelligence (LSP). [mcp, plugins/code-intelligence]
+  Si el servidor lleva un token, `claude mcp add-json <n> -` lee el JSON por stdin y el token no queda en la línea
+  de comandos ni en el historial. (fuente: https://code.claude.com/docs/en/changelog.md v2.1.327, 2026-11-23)
 
 ## 4. Contexto persistente [memory, features-overview, skills]
 - **CLAUDE.md**:
@@ -72,7 +75,8 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   - `` !`cmd` `` inyecta la salida de un comando. `@ruta` importa un archivo.
   - Lo importante arriba en SKILL.md. Las referencias largas, en archivos aparte.
   - Medir con `claude plugin eval` (baseline sin la skill, delta) y `/skill-doctor` (costo y uso).
-    [plugin-evals, whats-new w36/w37]
+    [plugin-evals; las páginas whats-new salieron del índice de docs el 2026-11-23, `claude plugin eval` sigue en el
+    changelog v2.1.327]
 - **Output style**: define cómo responde Claude (rol, tono, longitud). Solo uno activo. [output-styles]
 - **Auto memory**: `MEMORY.md`, del que se cargan las primeras 200 líneas o 25 KB. [memory]
 - **Cuándo agregar cada cosa** [features-overview]:
@@ -102,7 +106,17 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
      `"Stop":[{"hooks":[{"type":"command","command":"pnpm tsc --noEmit 1>&2 || exit 2"}]}]`. Puede bloquear como
      máximo 8 veces seguidas (`CLAUDE_CODE_STOP_HOOK_BLOCK_CAP`).
   4. Revisor ajeno: `/code-review [low..max]`, un subagente nuevo sobre el diff. También `/ultrareview` y
-     `/security-review`.
+     `/security-review`. Desde v2.1.328-329, `/code-review` sin objetivo revisa toda la rama contra la rama por
+     defecto, reporta solo bugs y violaciones de CLAUDE.md (marcados Important, Pre-existing o Nit) y cierra con un
+     arreglo sugerido; las limpiezas de reuso, simplificación y eficiencia van con `/simplify`. `/security-review`
+     ahora pide permiso antes de correr. (fuente: https://code.claude.com/docs/en/changelog.md v2.1.323/v2.1.328/v2.1.329,
+     2026-11-23)
+  5. PR con watch: `/ship` (cambio terminado: commit, push, PR, `/code-review` y luego atiende checks, conflictos y
+     comentarios) o `/steward` (PR propio ya abierto, sin revisión previa). Requiere v2.1.330+, `gh` 2.63+ y git
+     2.38+. Antes de `/ship`, `git status` y sacar lo que no va: puede commitear **todo** lo no commiteado, solo
+     detecta secretos por nombre de archivo y una regla `deny` no saca un archivo del commit. Sin supervisión, auto
+     mode; en `bypassPermissions` no arranca el watch. El merge lo hace la persona. (fuente:
+     https://code.claude.com/docs/en/ship-command.md, 2026-11-23)
 - **Evidencia**: pedir siempre el comando ejecutado y su salida, o la captura. `/verify` construye y ejecuta la app.
 - **Revisión contra la spec**: "use a subagent to review the diff against SPEC.md ... report gaps that affect
   correctness and **skip style**". Sin el "skip style", el revisor sobre-señala.
@@ -126,6 +140,11 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   - El modo estricto (pestaña Overrides) quita el reintento fuera del sandbox.
   - `bypassPermissions` y `--dangerously-skip-permissions` solo dentro de un contenedor, VM o `srt`, nunca como root.
     [sandbox-environments]
+  - Desde v2.1.325, los comandos Bash en sandbox siguen el flujo normal de permisos (antes corrían sin prompt). Para
+    volver a correrlos sin prompt: `sandbox.autoAllowBashIfSandboxed: true` (si el sandbox lo prende managed, en la
+    fuente managed de mayor rango). El sandbox ya no escribe en `.claude` (settings, skills, agents, hooks) de los
+    directorios agregados ni en carpetas sensibles del home. (fuente: https://code.claude.com/docs/en/changelog.md
+    v2.1.325/v2.1.326, 2026-11-23)
 - **Dónde vive cada regla**:
   - `~/.claude/settings.json` y `.claude/settings.local.json`: solo para el usuario.
   - `.claude/settings.json`: equipo, va en git. Su `deny` aplica de inmediato; su `allow` y sus hooks esperan al
@@ -134,6 +153,22 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   turno sigue. Sirve en terminal, subagentes y teammates para corridas sin supervisión. (fuente:
   https://code.claude.com/docs/en/changelog.md v2.1.319, 2026-11-06)
   - Managed settings: para la organización, no se pueden sobrescribir.
+- "Don't ask again" sobre una regla que parece contener un secreto, o que iría a un `settings.local.json` trackeado
+  por git, dura solo la sesión y no se guarda. Igual, nunca escribir secretos en reglas. (fuente:
+  https://code.claude.com/docs/en/changelog.md v2.1.323, 2026-11-23)
+- **Code Mode** (experimental, opt-in con `CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, solo terminal, v2.1.323+): Claude
+  escribe JavaScript que hace varias llamadas de herramientas en un paso. Útil para cambios repetidos en muchos
+  archivos, búsquedas que hay que filtrar o comandos independientes en paralelo. Qué cambia en las garantías:
+  - Cada llamada sigue pasando por `deny`/`ask` y hooks `PreToolUse` con su nombre normal; en auto mode el
+    clasificador revisa el **código**, no cada llamada, y no ve valores calculados en ejecución. Lo que hay que
+    controlar sí o sí va en reglas o hooks.
+  - Un hook que filtra comandos shell debe revisar cada parte del comando (puede llegar como `cd 'app' && git push`).
+    Para revisar el código, hook `PreToolUse` con matcher `REPL` (`tool_input.code`); para redactar la salida,
+    `PostToolUse` sobre `REPL` con `updatedToolOutput` (`UserPromptSubmit` ya no recibe esa salida desde v2.1.328).
+  - Un hook que falla deja pasar la llamada por defecto: en hooks de guarda, `"onFailure": "block"`.
+  - El sandbox cubre solo los comandos shell; el JS y sus llamadas de archivos, web y MCP corren fuera. Para aislar
+    todo, contenedor o VM; sandbox estricto para que no se reintente fuera.
+  (fuente: https://code.claude.com/docs/en/code-mode.md, 2026-11-23)
 
 ## 7. Conducir la sesión [best-practices, checkpointing, interactive-mode, sessions]
 - **Mirar el primer minuto**:
@@ -162,7 +197,9 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
 - **Modelo**:
   - Sonnet en tareas rutinarias.
   - Haiku en subagentes simples (`model: haiku`).
-  - Fable 5.1 con `/model fable`.
+  - Fable 5.2 (`claude-fable-5-2`, 1M de contexto) con `/model fable`; es el Fable por defecto desde v2.1.321 y las
+    selecciones guardadas de 5.1 migran a `fable`. (fuente: https://code.claude.com/docs/en/changelog.md v2.1.321,
+    2026-11-23)
 - **Auto mode**:
   - Bloquea `curl|bash`, deploys y migraciones a producción, force push sobre trabajo ajeno, envío de datos sensibles
     afuera y acciones inducidas por contenido leído.
@@ -172,6 +209,10 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
     environment.
   - Un "don't push until I've reviewed" dicho en el chat cuenta como señal, pero puede perderse al compactar. Lo que
     importa va en `deny`.
+  - Auto mode ignora las reglas `allow` comodín que ejecutan cualquier paquete o programa (`Bash(pnpm dlx *)`,
+    `/usr/bin/npm run:*`, reglas sin programa o que empiezan con `$HOME`): esas las decide el clasificador. No
+    contar con ellas para desbloquear una corrida. (fuente: https://code.claude.com/docs/en/changelog.md
+    v2.1.326/v2.1.327, 2026-11-23)
 - **Modo manual con muchos prompts**: `/fewer-permission-prompts` crea un allowlist de solo lectura.
 - **Costo**:
   - `/usage` desglosa por skill, subagente, plugin y MCP.
@@ -210,6 +251,12 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
     contenedor. (fuente: changelog v2.1.319, 2026-11-06)
   - `/schedule`: tareas programadas en la nube, con disparadores de GitHub o de API; requiere login de claude.ai.
     Proteger `main` con una branch rule y vigilar las primeras corridas.
+  - Desde v2.1.330, `/loop` y las tareas programadas recurrentes duran hasta 30 días (antes 7) mientras la sesión
+    siga abierta: ponerles condición de fin y revisarlas en `/tasks`, que ahora las lista y permite pararlas. Desde
+    v2.1.325 preguntan antes de correr una skill que declara `allowed-tools` o hooks; para que corra sin supervisión,
+    `Skill(nombre)` en `permissions.allow`. Las tareas guardadas por versiones anteriores pueden necesitar
+    reprogramarse (v2.1.329). (fuente: https://code.claude.com/docs/en/changelog.md v2.1.325/v2.1.329/v2.1.330,
+    2026-11-23)
   - Tareas programadas de Desktop.
   - Channels: eventos empujados a la sesión.
 - **Paralelismo**:
@@ -222,6 +269,19 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   - Una segunda sesión es el revisor independiente más barato.
 - **CI**: GitHub Actions (`/install-github-app`, `@claude`) o GitLab, con OIDC, permisos mínimos y `--max-turns`.
   Code Review gestionado con `REVIEW.md`. [github-actions, code-review]
+- **Claude Ship** (Team/Enterprise, beta): Code Review + PR Steward (empuja fixes a checks, conflictos y comentarios
+  sin preguntar; no aprueba ni mergea; se para con `@claude stop` o quitando el label `claude-pr-steward-watching`)
+  + Claude Approvals (política en `.claude/approvals.yml`, dice cuántas personas aprueban cada ruta y dónde puede
+  aprobar Claude). Prácticas: empezar Approvals en modo `observe` hasta que coincida con los revisores; exigir
+  reviews con branch rules y dejar la app de Claude **fuera** de la lista de bypass; fijar el origen del check
+  requerido a la app de Claude; poner límite de gasto (observe también se cobra). Steward lee las instrucciones
+  desde la rama por defecto. (fuente: https://code.claude.com/docs/en/claude-ship.md,
+  https://code.claude.com/docs/en/pr-steward-security.md, https://code.claude.com/docs/en/approvals-setup.md,
+  https://claude.com/resources/articles/introducing-claude-ship, 2026-11-23)
+- **Compartir sesiones** (cloud o Remote Control): quien recibe el link ve prompts, archivos leídos, salidas de
+  comandos, resultados de conectores y **credenciales** que hayan aparecido; en Remote Control, también archivos
+  fuera de la carpeta y páginas de Chrome. Revisar la sesión antes y dejarla Private si tiene algo sensible.
+  (fuente: https://code.claude.com/docs/en/share-sessions.md, 2026-11-23)
 - **Agent SDK**:
   - `query()` con `allowedTools`, `permissionMode`, `maxTurns`, `maxBudgetUsd`.
   - Hooks y `canUseTool` para el control humano.
@@ -230,6 +290,10 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
   - Un producto propio se autentica con API key, no con OAuth de suscripción. [agent-sdk_*, legal-and-compliance]
 - **Despliegue seguro**: tener en cuenta la "lethal trifecta" (datos privados + contenido no confiable + canal de
   exfiltración), contenedor endurecido y red cerrada con proxy. [agent-sdk_secure-deployment]
+  "Least agency": sacar los secretos permanentes del entorno del agente (OIDC o workload identity con token corto
+  por job), hooks que bloqueen commits con secretos más secret scanning al push, y chequear las llamadas contra
+  política fuera del modelo. (fuente: https://claude.com/resources/articles/enterprise-guide-to-securing-coding-agents,
+  2026-11-23)
 
 ## Obsoletas (no recomendar) [best-practices]
 | Consejo viejo | Por qué ya no |
@@ -240,3 +304,6 @@ cambios con `(fuente: URL, fecha)` y los registra en `REFINAMIENTOS.md`.
 | "think hard", "be thorough" | el control es effort; `ultrathink` vale para un turno |
 | "keep going", "don't be lazy" | causan sobre-trabajo; usar una comprobación, `/goal` o un hook `Stop`; "continue" si se corta |
 | Describir arquitectura o layout en CLAUDE.md | Claude lee el repo |
+| "Fable 5.1 con `/model fable`" | desde v2.1.321 `fable` es Fable 5.2 (fuente: https://code.claude.com/docs/en/changelog.md v2.1.321, 2026-11-23) |
+| Contar con que el Bash en sandbox corre sin prompts | desde v2.1.325 sigue el flujo normal de permisos; hace falta `sandbox.autoAllowBashIfSandboxed: true` (fuente: https://code.claude.com/docs/en/changelog.md v2.1.325, 2026-11-23) |
+| `/code-review` para limpiezas de estilo o reuso | desde v2.1.328 solo reporta bugs y violaciones de CLAUDE.md; las limpiezas van con `/simplify` (fuente: https://code.claude.com/docs/en/changelog.md v2.1.328, 2026-11-23) |

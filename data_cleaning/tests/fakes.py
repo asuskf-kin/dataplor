@@ -1,5 +1,6 @@
 """In-memory adapters for the ports: the graph runs end to end without real data."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,8 @@ import polars as pl
 
 from cleaning_agent.application.cleaning_catalog import CleaningModule
 from cleaning_agent.application.graph.nodes import Dependencies
+from cleaning_agent.domain.cleaning.lodging_filter import remove_lodging_rentals
+from cleaning_agent.domain.datamatch_steps import LODGING_FILE_SUFFIX
 from cleaning_agent.domain.lineage import ArtifactRef, StageRecord
 from cleaning_agent.domain.models import (
     CleaningMode,
@@ -20,6 +23,9 @@ from cleaning_agent.domain.models import (
     OutputPaths,
     PrefilterResult,
     PriorizacionResult,
+    ProspectionQaPrepared,
+    ProspectionQaResult,
+    ProspectionQaReview,
     ProspectsResult,
     QAExploreResult,
     QARunResult,
@@ -231,6 +237,9 @@ class FakeLineage:
         self.documents[str(path)] = document
         return str(path)
 
+    def read_decisions(self, path: Path) -> list[dict[str, Any]]:
+        return []
+
 
 @dataclass
 class FakeExecutiveReport:
@@ -250,7 +259,12 @@ class FakeExecutiveReport:
         correlation_id: str,
         out_dir: Path,
         xlsx_dir: Path,
+        known_clients: dict[str, str] | None = None,
+        known_step: str | None = None,
+        lodging_rentals: dict[str, str] | None = None,
+        upstream: list[tuple[str, int]] | None = None,
     ) -> ExecutiveReportOutcome:
+        self.upstream = upstream
         if self.error:
             raise self.error
         self.calls.append(
@@ -387,6 +401,8 @@ FAKE_MODULES = {
     5: CleaningModule(
         5, "Fake 5: regex", "05_fake", lambda df, items: (df, items, None)
     ),
+    # The real module 7: it always runs (Airbnb / rented flats)
+    7: CleaningModule(7, "Module 7: Airbnb", "07_fake", remove_lodging_rentals),
 }
 
 RAW = "data/raw/mx/femsa/part-*.parquet"
@@ -559,19 +575,43 @@ class FakeDatamatchSteps:
     calls: list[tuple[str, str, float, int]] = field(default_factory=list)
     prospects: list[tuple[str, list[str], str]] = field(default_factory=list)
     known_in_file: int | None = None
+    false_negatives: dict[str, str] = field(default_factory=dict)
 
     def build_prospects(
-        self, cleaned_file: str, match_files: list[str], target: Path
+        self,
+        cleaned_file: str,
+        match_files: list[str],
+        target: Path,
+        excluded_states: list[str] | None = None,
+        false_negatives: Mapping[str, str] | None = None,
     ) -> ProspectsResult:
         self.prospects.append((cleaned_file, match_files, str(target)))
+        self.false_negatives = dict(false_negatives or {})
         known = 10 * len(match_files)
+        removed = len(self.false_negatives)
+        # One rented flat removed, with its CSV next to the prospects (uploaded after
+        # them: priorización must still read the prospects)
+        lodging = target.with_name(f"{target.stem}{LODGING_FILE_SUFFIX}.csv")
         return ProspectsResult(
             file=str(target),
             known_ids=known,
             known_in_file=known if self.known_in_file is None else self.known_in_file,
             rows_in=100,
-            rows_out=100 - known,
+            rows_out=100 - known - 1 - removed,
+            false_negatives=self.false_negatives,
+            lodging_rentals={"dp-depto": "depto"},
+            lodging_file=str(lodging),
         )
+
+    def close_cycle_report(
+        self,
+        report_dir: Path,
+        client_name: str,
+        history: list[dict[str, Any]],
+        lodging_removed: int,
+        prospects_left: int,
+    ) -> list[str]:
+        return []
 
     def run(
         self,
@@ -603,4 +643,59 @@ class FakeDatamatchSteps:
                 "datamatch_file": inputs.datamatch_file,
                 "clients_file": inputs.clients_file,
             },
+        )
+
+
+@dataclass
+class FakeProspectionQa:
+    """Two false negatives (one Dataplor id per reason) unless ``mistakes`` says otherwise."""
+
+    mistakes: dict[str, str] = field(
+        default_factory=lambda: {"dp-fn1": "both_strong", "dp-fn2": "name_dominant"}
+    )
+    error: Exception | None = None
+    reviews: list[ProspectionQaReview] = field(default_factory=list)
+    prepared_with: list[dict[str, Any]] = field(default_factory=list)
+
+    def prepare(
+        self,
+        cleaned_file: str,
+        match_files: list[str],
+        excluded_states: list[str],
+        clients_file: str,
+        client_cols: Mapping[str, str],
+        dataplor_cols: Mapping[str, str],
+        out_dir: Path,
+    ) -> ProspectionQaPrepared:
+        if self.error:
+            raise self.error
+        self.prepared_with.append(
+            {"clients_file": clients_file, "match_files": match_files, "client_cols": dict(client_cols)}
+        )
+        return ProspectionQaPrepared(
+            out_dir=str(out_dir),
+            match=20,
+            no_match=79,
+            clients=30,
+            mistakes=len(self.mistakes),
+            by_reason={"both_strong": 1, "name_dominant": 1, "proximity_dominant": 0},
+            categories_file=str(out_dir / "categories_for_review.json"),
+            mistakes_file=str(out_dir / "mistakes_report.csv"),
+            mistake_ids=dict(self.mistakes),
+        )
+
+    def build(
+        self,
+        prepared: ProspectionQaPrepared,
+        review: ProspectionQaReview,
+        client: str,
+        country: str,
+        dataplor_cols: Mapping[str, str],
+    ) -> ProspectionQaResult:
+        self.reviews.append(review)
+        out = Path(prepared.out_dir)
+        return ProspectionQaResult(
+            report=str(out / f"prospection_qa_report_{client}.html"),
+            local_files=[str(out / "no_match_enriched.xlsx")],
+            summary={"falsos_negativos": prepared.mistakes, "veredicto": "insufficient"},
         )

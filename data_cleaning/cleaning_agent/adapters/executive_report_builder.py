@@ -18,13 +18,14 @@ only carry counts and file names: org policy forbids row contents (PII) in logs.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import html
 import io
 import logging
 import re
 import unicodedata
 import uuid
-from collections.abc import Callable, MutableMapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -89,9 +90,24 @@ STEP_NAMES = {
     "04": "4 · Horarios y fuzzy",
     "05": "5 · Regex final",
     "06": "6 · Propiedad saturada",
+    # Module 7 runs last in the pipeline; in the report it is step 8, after the channel
+    # filter (user, 2026-11-23: "un paso más para que sea 8")
+    "07": "8 · Alojamiento tipo Airbnb / departamento",
 }
-MANUAL_STEP = "8 · Borrados a mano (franquicias)"
-MANUAL_REASON = "8_Borrado_a_mano_(franquicia)"
+AIRBNB_PIPELINE_STEP = STEP_NAMES["07"]
+# Pipeline steps shown before the channel filter; Airbnb (07) closes with the others
+STEP_RUN_ORDER = ("00", "01", "02", "03", "04", "05", "06")
+MANUAL_STEP = "9 · Borrados a mano (franquicias)"
+MANUAL_REASON = "9_Borrado_a_mano_(franquicia)"
+# Points the bottler already has as clients, found in the Datamatch loop (user,
+# 2026-11-23: "actualiza el reporte" before the prospects go to gold)
+DATAMATCH_STEP = "10 · Ya son clientes del bottler (Datamatch)"
+DATAMATCH_REASON = "10_Cliente_del_bottler_(Datamatch)"
+# Rented flats removed after the Datamatch (user, 2026-11-23: "agrega elimina como paso
+# adicional al datamatch, agrégalo al report")
+# Safety net only: since module 7 they are already out before the Datamatch
+LODGING_STEP = "11 · Alojamiento tipo Airbnb (red de seguridad tras el Datamatch)"
+LODGING_REASON = "11_Alojamiento_tipo_Airbnb_departamento"
 
 NO_CATEGORY = "(sin categoría)"
 NO_CHANNEL = "(sin canal)"
@@ -213,6 +229,11 @@ def generate_executive_report(
     correlation_id: str | None = None,
     brand: KinBrand | None = None,
     xlsx_dir: Path | None = None,
+    known_clients: Mapping[str, str] | None = None,
+    export_channel_csv: bool = True,
+    known_step: str = DATAMATCH_STEP,
+    lodging_rentals: Mapping[str, str] | None = None,
+    upstream: Sequence[tuple[str, int]] | None = None,
 ) -> ExecutiveReportResult:
     """Builds the executive report of one cleaning run and writes it into ``out_dir``.
 
@@ -235,6 +256,16 @@ def generate_executive_report(
         brand: Kin brand assets (fonts, tokens, logo) for the HTML, PDF, charts and
             Excel. ``None`` = the skill bundled in this repository.
         xlsx_dir: where the Excel goes (the DWH gold layer); ``None`` = ``out_dir``.
+        known_clients: Dataplor ids the Datamatch loop matched to a bottler client, with
+            the step that found them; they leave the deliverable as step 9.
+        export_channel_csv: ``False`` skips the channel CSV (the prospects file already
+            is the deliverable without known clients).
+        known_step: funnel step name for ``known_clients`` (widened when out-of-territory
+            points are counted with them).
+        lodging_rentals: Dataplor ids removed as Airbnb / apartment rentals after the
+            Datamatch, with the word that matched; they leave the deliverable as step 11.
+        upstream: paso 0, before this report's universe: Dataplor raw, what bronze
+            dropped, what went to the Front and what the Front removed, as (label, rows).
 
     Raises:
         FileNotFoundError: if ``raw_csv`` or ``output_csv`` does not exist.
@@ -265,7 +296,11 @@ def generate_executive_report(
         apply_manual_deletions,
         warnings,
         log,
+        known_clients or {},
+        known_step,
+        lodging_rentals or {},
     )
+    data = dataclasses.replace(data, upstream=list(upstream or []))
     base_name = _report_base_name(
         name_template,
         {
@@ -290,8 +325,10 @@ def generate_executive_report(
     files: list[Path] = []
     with matplotlib.rc_context(_rc_params(theme)):
         content = _build_content(data, theme)
-        channel_file = _export_channel_csv(
-            output_csv, out_dir, data, overwrite_channel_csv, log
+        channel_file = (
+            _export_channel_csv(output_csv, out_dir, data, overwrite_channel_csv, log)
+            if export_channel_csv
+            else None
         )
         if channel_file is not None:
             files.append(channel_file)
@@ -451,6 +488,14 @@ class _RunData:
     channel: str | None  # effective channel (None if the output has no channel column)
     channel_step: str
     manual_file: Path | None
+    known: pd.DataFrame  # dataplor_id, paso: points already clients of the bottler
+    known_step: str = DATAMATCH_STEP
+    # dataplor_id, paso (the matched word): rented flats removed after the Datamatch
+    lodging: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=["dataplor_id", "paso"])
+    )
+    # Paso 0 (user, 2026-11-23): raw -> bronze -> Front, before the pipeline's universe
+    upstream: list[tuple[str, int]] = field(default_factory=list)
 
     @property
     def n_initial(self) -> int:
@@ -466,7 +511,7 @@ class _RunData:
 
     @property
     def n_final(self) -> int:
-        return self.n_channel - len(self.manual)
+        return self.n_channel - len(self.manual) - len(self.known) - len(self.lodging)
 
     @property
     def retention(self) -> float:
@@ -475,6 +520,14 @@ class _RunData:
     @property
     def has_manual(self) -> bool:
         return len(self.manual) > 0
+
+    @property
+    def has_known(self) -> bool:
+        return len(self.known) > 0
+
+    @property
+    def has_lodging(self) -> bool:
+        return len(self.lodging) > 0
 
 
 def _present_columns(path: Path, wanted: Sequence[str]) -> list[str]:
@@ -616,6 +669,9 @@ def _load_run_data(
     apply_manual: bool,
     warnings: list[str],
     log: _CorrelationAdapter,
+    known_clients: Mapping[str, str],
+    known_step: str = DATAMATCH_STEP,
+    lodging_rentals: Mapping[str, str] | None = None,
 ) -> _RunData:
     raw = _read_columns(raw_csv, RAW_COLS)
     input_ids = set(raw["dataplor_id"])
@@ -655,7 +711,45 @@ def _load_run_data(
         else pd.DataFrame()
     )
 
-    extra = [f for f in (channel_rows, manual_rows) if len(f)]
+    known = _known_clients(known_clients, final, outside, manual, warnings)
+    known_rows = (
+        pd.DataFrame(
+            {
+                "paso": known_step,
+                "dataplor_id": known["dataplor_id"],
+                "drop_reason": DATAMATCH_REASON,
+                "drop_match": known["paso"],  # the Datamatch step that found it
+            }
+        )
+        if len(known)
+        else pd.DataFrame()
+    )
+
+    # Counted after the known clients: a point is dropped once, by its first reason
+    lodging = _known_clients(
+        lodging_rentals or {},
+        final,
+        pd.concat([outside, known[["dataplor_id"]]], ignore_index=True),
+        manual,
+        warnings,
+        "puntos de alojamiento tipo Airbnb",
+    )
+    lodging_rows = (
+        pd.DataFrame(
+            {
+                "paso": LODGING_STEP,
+                "dataplor_id": lodging["dataplor_id"],
+                "drop_reason": LODGING_REASON,
+                "drop_match": lodging["paso"],  # the word that matched
+            }
+        )
+        if len(lodging)
+        else pd.DataFrame()
+    )
+
+    extra = [
+        f for f in (channel_rows, manual_rows, known_rows, lodging_rows) if len(f)
+    ]
     if extra:
         drops = pd.concat([drops, *extra], ignore_index=True)
     location = [
@@ -674,6 +768,9 @@ def _load_run_data(
         channel=effective_channel,
         channel_step=_channel_step(effective_channel),
         manual_file=manual_file,
+        known=known,
+        known_step=known_step,
+        lodging=lodging,
     )
     # Reconciliation: initial - dropped must give exactly the deliverable.
     gap = data.n_initial - len(drops) - data.n_final
@@ -685,7 +782,7 @@ def _load_run_data(
         )
     log.info(
         "Entrada %s (%s), salida %s (%s), descartes %s en %d paso(s), canal %s (%s fuera), "
-        "borrados a mano %s.",
+        "borrados a mano %s, clientes del bottler %s.",
         raw_csv.name,
         _thousands(data.n_initial),
         output_csv.name,
@@ -695,8 +792,45 @@ def _load_run_data(
         effective_channel or "sin filtro",
         _thousands(len(outside)),
         _thousands(len(manual)),
+        _thousands(len(known)),
     )
     return data
+
+
+def _known_clients(
+    known_clients: Mapping[str, str],
+    final: pd.DataFrame,
+    outside: pd.DataFrame,
+    manual: pd.DataFrame,
+    warnings: list[str],
+    label: str = "puntos con match del Datamatch",
+) -> pd.DataFrame:
+    """Datamatch (or other closing-step) points still in the deliverable (channel,
+    without franchises)."""
+    if not known_clients:
+        return pd.DataFrame(columns=["dataplor_id", "paso"])
+    known = pd.DataFrame(
+        {"dataplor_id": list(known_clients), "paso": list(known_clients.values())}
+    )
+    # Ids are compared as text: the pipeline output may read them as numbers
+    deliverable = (
+        set(final["dataplor_id"].astype(str))
+        - set(outside["dataplor_id"].astype(str))
+        - set(manual["dataplor_id"].astype(str))
+    )
+    inside = known["dataplor_id"].astype(str).isin(deliverable)
+    if not inside.all():
+        warnings.append(
+            f"{_thousands(int((~inside).sum()))} {label} no están en "
+            "el entregable: no se descuentan."
+        )
+    ids = final.assign(_key=final["dataplor_id"].astype(str))[["_key", "dataplor_id"]]
+    return (
+        known[inside]
+        .assign(_key=lambda d: d["dataplor_id"].astype(str))
+        .drop(columns="dataplor_id")
+        .merge(ids, on="_key", how="left")[["dataplor_id", "paso"]]
+    )
 
 
 # =============================================================================
@@ -757,6 +891,7 @@ def _build_content(data: _RunData, theme: _Theme) -> _Content:
     content = _Content(
         cards=_build_cards(data), hero_detail=_hero_detail(data), theme=theme
     )
+    _section_upstream(data, content)
     _section_funnel(data, content)
     reasons = _section_reasons(data, content)
     _section_manual(data, content)
@@ -779,6 +914,7 @@ def _build_cards(data: _RunData) -> list[_Card]:
     or on paper.
     """
     channel, manual = data.channel, data.has_manual
+    known = data.has_known or data.has_lodging
     cards = [
         _Card(
             "",
@@ -799,7 +935,7 @@ def _build_cards(data: _RunData) -> list[_Card]:
             "Dataset completo",
             _thousands(data.n_full),
             f"{_share_of_universe(data.n_full, data)} · todos los canales",
-            not (channel or manual),
+            not (channel or manual or known),
         ),
     ]
     if channel:
@@ -811,7 +947,7 @@ def _build_cards(data: _RunData) -> list[_Card]:
         cards.append(
             _Card("−", label, _thousands(n_out), _share_of_universe(n_out, data), False)
         )
-        if manual:
+        if manual or known:
             cards.append(
                 _Card(
                     "=",
@@ -832,8 +968,31 @@ def _build_cards(data: _RunData) -> list[_Card]:
                 False,
             )
         )
-    if channel or manual:
-        name = f"Entregable {channel}" if channel else "Entregable"
+    if data.has_known:
+        n_known = len(data.known)
+        cards.append(
+            _Card(
+                "−",
+                data.known_step.split(" · ", 1)[-1],
+                _thousands(n_known),
+                _share_of_universe(n_known, data),
+                False,
+            )
+        )
+    if data.has_lodging:
+        n_lodging = len(data.lodging)
+        cards.append(
+            _Card(
+                "−",
+                LODGING_STEP.split(" · ", 1)[-1],
+                _thousands(n_lodging),
+                _share_of_universe(n_lodging, data),
+                False,
+            )
+        )
+    if channel or manual or known:
+        name = "Prospectos" if known else "Entregable"
+        name = f"{name} {channel}" if channel else name
         cards.append(
             _Card(
                 "=",
@@ -848,6 +1007,10 @@ def _build_cards(data: _RunData) -> list[_Card]:
 
 def _hero_detail(data: _RunData) -> str:
     target = f"al entregable de {data.channel}" if data.channel else "al dataset final"
+    if data.has_known:
+        target = (
+            f"a los prospectos de {data.channel}" if data.channel else "a los prospectos"
+        )
     return f"{_thousands(data.n_final)} de {_thousands(data.n_initial)} registros llegan {target}"
 
 
@@ -944,15 +1107,28 @@ def _retention_by(
 
 
 # --- Sections ----------------------------------------------------------------------
+def _section_upstream(data: _RunData, content: _Content) -> None:
+    """Paso 0: how many came from the raw Dataplor and how many the Front removed."""
+    if not data.upstream:
+        return
+    content.add_table(
+        pd.DataFrame(data.upstream, columns=["Paso 0 · Raw → Front", "Registros"]),
+        "paso0",
+    )
+
+
 def _section_funnel(data: _RunData, content: _Content) -> None:
     """Section 3: how much each step drops and how much is left after it."""
     by_step = data.drops.groupby("paso").size().rename("eliminados")
     present = set(by_step.index)
-    order = [STEP_NAMES[k] for k in sorted(STEP_NAMES) if STEP_NAMES[k] in present]
+    order = [STEP_NAMES[k] for k in STEP_RUN_ORDER if STEP_NAMES[k] in present]
     for closing in (
         data.channel_step,
+        AIRBNB_PIPELINE_STEP,
         MANUAL_STEP,
-    ):  # channel, then manual, close the funnel
+        data.known_step,
+        LODGING_STEP,
+    ):  # channel 7, Airbnb 8, franchises 9, known clients 10, safety net 11
         if closing in present:
             order.append(closing)
     funnel = by_step.reindex(order).fillna(0).astype(int).to_frame()
@@ -1211,6 +1387,8 @@ def _categories_chart(top: pd.DataFrame, data: _RunData, content: _Content) -> N
         scope = f"el entregable de {data.channel} (incluye el filtro de canal" + (
             " y los borrados a mano)" if data.has_manual else ")"
         )
+        if data.has_known:
+            scope = scope[:-1] + " y los clientes del bottler)"
     else:
         scope = "el dataset final"
     _title(
@@ -1278,6 +1456,7 @@ def _report_blocks(content: _Content) -> list[tuple[str, list[str], list[str]]]:
         k for k in content.tables if k.startswith("top_")
     ]  # a table may lack a chart
     return [
+        ("Paso 0 · Dataplor raw → Front", [], ["paso0"]),
         ("Embudo del pipeline", ["embudo"], ["embudo"]),
         ("Motivos de eliminación", ["motivos"], ["motivos"]),
         ("Borrados a mano: franquicias", ["borrados_mano"], ["borrados_mano"]),
@@ -1465,6 +1644,8 @@ def _write_summary_sheet(
         ("Salida del pipeline", meta.output_name),
         ("Generado", meta.generated_at),
         (None, None),
+        *[(f"Paso 0 · {label}", n) for label, n in data.upstream],
+        *([(None, None)] if data.upstream else []),
         ("Universo inicial", f"=SUM(Categorias!C2:C{last})"),
         ("Conservados (entregable final)", f"=SUM(Categorias!D2:D{last})"),
         ("Eliminados", f"=SUM(Categorias!E2:E{last})"),
@@ -1473,7 +1654,10 @@ def _write_summary_sheet(
             "Categorías eliminadas por completo",
             f'=COUNTIF(Categorias!G2:G{last},"Eliminada completa")',
         ),
+        (AIRBNB_PIPELINE_STEP.split(" · ", 1)[-1], _airbnb_drops(data).shape[0]),
         ("Borrados a mano (franquicias)", len(data.manual)),
+        (data.known_step.split(" · ", 1)[-1], len(data.known)),
+        (LODGING_STEP.split(" · ", 1)[-1], len(data.lodging)),
         (
             "Categorías sin bajas",
             f'=COUNTIF(Categorias!G2:G{last},"Conservada completa")',
@@ -1678,6 +1862,37 @@ def _write_reasons_sheet(ws: Worksheet, pivot: pd.DataFrame, style: _XlsxStyle) 
     ws.auto_filter.ref = f"A1:{get_column_letter(total_col + 1)}{len(pivot) + 1}"
 
 
+def _airbnb_drops(data: _RunData) -> pd.DataFrame:
+    """Points module 7 removed (Airbnb / rented flats), with the word that matched."""
+    return data.drops[data.drops["paso"] == AIRBNB_PIPELINE_STEP]
+
+
+def _write_airbnb_sheet(ws: Worksheet, data: _RunData, style: _XlsxStyle) -> None:
+    """Sheet 'Airbnb' (user, 2026-11-23: "sacar su hojita"): each rented flat removed."""
+    cols = [c for c in ["name", "business_category", "city", "state"] if c in data.drops]
+    detail = _airbnb_drops(data).sort_values(["drop_match", *cols[:1]])
+    titles = {
+        "name": "Nombre",
+        "business_category": "Categoría",
+        "city": "Ciudad",
+        "state": "Estado",
+    }
+    _write_header(
+        ws,
+        ["Palabra", *[titles[c] for c in cols], "dataplor_id"],
+        [18, *[40 if c == "name" else 22 for c in cols], 38],
+        style,
+    )
+    for i, row in enumerate(
+        detail[["drop_match", *cols, "dataplor_id"]].itertuples(index=False), start=2
+    ):
+        for j, value in enumerate(row, start=1):
+            ws.cell(
+                row=i, column=j, value=None if pd.isna(value) else value
+            ).font = style.normal
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(cols) + 2)}{len(detail) + 1}"
+
+
 def _write_manual_sheet(ws: Worksheet, data: _RunData, style: _XlsxStyle) -> None:
     """Sheet 'Borrados a mano': every hand-deleted franchise, record by record."""
     cols = [
@@ -1729,6 +1944,8 @@ def _export_categories_xlsx(
     _write_reasons_sheet(wb.create_sheet("Categorias x motivo"), pivot, style)
     if data.has_manual:
         _write_manual_sheet(wb.create_sheet("Borrados a mano"), data, style)
+    if len(_airbnb_drops(data)):
+        _write_airbnb_sheet(wb.create_sheet("Airbnb"), data, style)
     wb.save(target)
     wiped = int((cat["conservados"] == 0).sum())
     intact = int((cat["eliminados"] == 0).sum())
@@ -2218,11 +2435,14 @@ def _summary(
         "out_of_channel_rows": len(data.out_of_channel),
         "channel_rows": data.n_channel,
         "manual_deletions": len(data.manual),
+        "known_client_points": len(data.known),
+        "lodging_rental_points": len(data.lodging),
         "final_rows": data.n_final,
         "total_drops": len(data.drops),
         "retention_pct": round(data.retention, 4),
         "reconciliation_gap": data.n_initial - len(data.drops) - data.n_final,
         "warnings": n_warnings,
+        **{f"paso0: {label}": n for label, n in data.upstream},
     }
     for code, label in STEP_NAMES.items():
         summary[f"drops_step_{code}"] = int(by_step.get(label, 0))

@@ -33,7 +33,7 @@ DATA_DIR = PROJECT_ROOT / _data_dir_path
 
 # Agent defaults (cleaning_agent). Validated by its Pydantic models, not here.
 AGENT_SETTINGS = {
-    "default_modules": [1, 2, 3, 4, 5, 6],
+    "default_modules": [1, 2, 3, 4, 5, 6, 7],
     "items_to_track": [],
     "checkpoints": "data/checkpoints.sqlite",
     "runs_dir": "data/runs",
@@ -43,6 +43,8 @@ AGENT_SETTINGS = {
 # Defaults proposed to the human for each cleaning mode
 TERRITORY_SETTINGS = dict(config_data.get("territory_filter") or {})
 CLIENT_SETTINGS = dict(config_data.get("client_filter") or {})
+# Paso 1 bottler: validación de la base de clientes (polígono del país, canal, destino)
+CLIENTS_BOTTLER_SETTINGS = dict(config_data.get("clients_bottler") or {})
 DATAMATCH_SETTINGS = {
     "front_url": "",
     "qa_project_dir": "../../QA_datamatch",
@@ -84,6 +86,12 @@ GOLD_PACKAGE_SETTINGS: dict[str, Any] = {
     "contacts": [],
     "client_columns": {},
     **(config_data.get("gold_package") or {}),
+}
+# Registro de prospección (user, 2026-11-23): people named in the final metadata
+REGISTRY_SETTINGS: dict[str, Any] = {
+    "responsable": "",
+    "registrado_por": "",
+    **(config_data.get("registro_prospeccion") or {}),
 }
 AZURE_SETTINGS = {
     "container": "",

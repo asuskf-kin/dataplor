@@ -201,3 +201,228 @@
 - Por qué: al abrir el CSV en LibreOffice/Excel el JSON entre comillas se partía en cada coma y corría el resto de la
   fila (la persona lo vio en las horas). Era CSV válido, pero no se veía bien; el CSV de Golfo tiene el mismo problema.
   Verificado abriendo el BOTTLER de Andina con LibreOffice sin interfaz: 48 columnas, 0 valores fuera de su columna.
+
+## 2026-11-17 · Republicación en gold con la fecha original (Andina AR)
+
+- Qué: se reemplazaron en `prospecting-data/gold/ko/ar/andina/prospecting-data/20261111/` los CSV KO/BOTTLER y los
+  dos mapas, con `_metadata.json` + `_qa.html` nuevos (`fecha` 20261111, `actualizacion.fecha` 20261117 y motivo).
+  Subida con `AzureBlobStorage.upload(replace=True)`: 12 blobs, tamaño y MD5 verificados. Excel, deck y prospectos
+  no se tocaron. Registro: `data/runs/dataplor-20261109-182659-d5b4/republish_gold_20261117.json`.
+- Por qué: la persona pidió "actualiza en gold, mantén la fecha anterior". Es una excepción explícita a "no re-subir"
+  (Lineamientos v1.1): el KO publicado llevaba coordenadas y `dataplor_id`, y los CSV se descuadraban.
+
+## 2026-11-23 · Validación de la base de clientes bottler igual que Customer Potential
+
+- Qué: `clean-clients` valida la base con las reglas de `dw_validar` (potential-customer-workflow): canal,
+  coordenada válida, dentro del país con el polígono oficial IGN sin tolerancia (base invertida y filas con
+  lat/lon invertidas o sin signo se corrigen), coordenada única (queda la primera) y no aislado (20 km).
+  Reemplaza la versión con caja de coordenadas ± 0.5° del mismo día. Destino: `bronze/ko/{pais}/{bottler}/
+  clients/{fecha}/`, la carpeta de clientes validados que ya usa el DWH (antes `clients_bottler_clean`, que
+  no estaba en el DWH). Canal por defecto `todos`.
+- Por qué: la persona pidió "todos los procesos para validar dato bottler como lo hacemos en
+  potential-customer-workflow, mismo QA". Una caja deja pasar puntos en Chile o Uruguay; el polígono no. Sin
+  filtro de canal porque la base sirve para sacar de los prospectos a quien ya es cliente, de cualquier canal.
+  Andina AR (20261123): 61.023 leídos → 60.103 válidos; 5 sin coordenada, 11 fuera del país, 850 coordenada
+  repetida, 54 aislados; base completa invertida y 2 filas con el signo corregido. QA 9/9.
+
+## 2026-11-23 · Mapa de puntos en el QA de clientes bottler, sin APIs
+
+- Qué: el `_qa.html` de `clean-clients` lleva un mapa estático (PNG de matplotlib embebido) con el contorno del
+  país y las provincias (IGN local), los clientes válidos y los descartados con ubicación por motivo.
+- Por qué: la persona pidió ver dónde están los puntos "sin necesidad de usar herramientas externas" y que "el
+  mapa no debe tener APIs". Una imagen no usa red ni JavaScript (a diferencia del mapa de prospección con
+  teselas Esri) y no deja las coordenadas de clientes como texto en la página.
+
+## 2026-11-23 · Validación de clientes bottler como paso del flujo
+
+- Qué: nodos `ask_validate_clients*` → `validate_clients` → `confirm_clients*` → `upload_clients` justo antes
+  del primer `front_datamatch`. Mismo validador que `clean-clients` (`wiring.client_validator`). El CSV
+  validado pasa a ser la base de clientes por defecto del paso 1 del Datamatch. Se pregunta una vez (los pasos
+  2+ usan la base reducida); no se pregunta si el país no tiene polígono configurado. Si la persona no aprueba
+  la subida, la corrida se detiene como en las demás capas (el Front necesita el archivo en Azure).
+- Por qué: la persona pidió "agrega este paso al flujo". Antes del Datamatch es donde entra la base al Front.
+
+## 2026-11-23 · QA HTML por paso de Datamatch y CSV que abren bien en Excel
+
+- Qué: cada paso del Datamatch deja `datamatch_<bottler>_pasoN_qa.html` en su carpeta (distancia real del
+  match, evidencia de nombre/dirección, bandas de score, puntos Dataplor repetidos, historial y parámetros
+  del Front) y `confirm_layer_upload` lo ofrece como `qa_html`. Los CSV del paso y la base de clientes
+  validada se escriben como los de gold (BOM, CRLF, `flat_text`); el escritor pasó a `adapters/excel_csv.py`.
+- Por qué: la persona pidió "no veo el reporte en html construyelo para cada paso" y "el csv al abrirlo se
+  rompe": el resultado del Front trae `res_10_neighbors` con saltos de línea dentro del campo (15.991 en el
+  paso 1 de Andina) y los archivos iban sin BOM. `flat_text` cambia comas por " - " en direcciones (el Front
+  normaliza el texto; se confirma en el paso 2 con la base reducida). La base validada ya publicada en bronze
+  no se reemplazó.
+
+## 2026-11-23 · Página de umbral por paso de Datamatch (versión Kin del reporte de QA_datamatch)
+
+- Qué: cada paso escribe `datamatch_<bottler>_pasoN_umbral.html` con los escenarios, curvas y pares
+  marginales del `threshold_report` de QA_datamatch, calculados dentro del agente (numpy, sin scipy ni
+  subproceso) y con la marca Kin. El umbral de limpieza se puede cambiar por paso (`umbral` /
+  `redo --umbral`).
+- Por qué: la persona pidió "un html donde puedo tomar decisiones, pásalo al brand y créalo también".
+  Correrlo dentro del paso evita el otro proyecto, cuyo mapeo `.c`/`.o` es el inverso al del Front actual.
+  Los pares llevan nombres y direcciones de clientes porque la decisión es si son el mismo lugar: por eso
+  la página queda solo en el espejo local y no entra en la lista de subida (regla de datos de clientes).
+
+
+## 2026-11-23 · Reporte ejecutivo con los clientes del Datamatch, en gold; decisiones en el linaje
+
+- Qué: al armar los prospectos gold se regenera el reporte ejecutivo (HTML, PDF, Excel) con el paso
+  `9 · Ya son clientes del bottler (Datamatch)` y sube con los prospectos. El linaje final trae
+  `decisiones` (qué se decidió y por qué) leídas de `data/runs/<hilo>/decisiones.json`.
+- Por qué: la persona pidió "primero actualiza el reporte", quitar del CSV silver los que hicieron match
+  y que "esos suben a gold", y "en el linaje agregar todo lo que hicimos y por qué". El CSV de silver no
+  se reescribe: es la entrada del Front en los tres pasos y lo publicado no se re-sube; el archivo sin
+  los clientes es el de prospectos gold.
+
+## 2026-11-23 · ";" y coma decimal en los CSV que abren personas
+
+- Qué: los CSV KO/BOTTLER del paquete gold y los de matches de cada paso del Datamatch se escriben con
+  ";" como separador y coma decimal (`excel_csv.write_excel_csv`). Las bases de clientes que vuelven al
+  Front y los prospectos que lee la priorización siguen con coma; los lectores del agente detectan el
+  separador (`csv_separator`).
+- Por qué: en Excel con configuración en español los archivos con coma se abrían "todo en una columna".
+  Los archivos que lee un programa no cambian: el Front y la priorización esperan coma, y la priorización
+  además hace `json.loads` sobre las columnas JSON de los prospectos.
+
+## 2026-11-23 · Los CSV vuelven a coma y punto decimal
+
+- Qué: los CSV KO/BOTTLER del paquete gold y los `datamatch_matches_*.csv` se escriben otra vez con coma y
+  punto decimal (`write_csv`), como el resto. Se retira `write_excel_csv` (";" y coma decimal).
+- Por qué: la persona abre los archivos en Google Sheets y LibreOffice; con ";" salían "todo en una
+  columna" y lat/long cambiaban de formato. Los lectores del agente siguen detectando ";" en los archivos
+  escritos mientras duró ese formato.
+
+## 2026-11-23 · Paso de Datamatch corrido con una base anterior: `filtrar_a_base`
+
+- Qué: si el Front corrió un paso con una base de clientes anterior (más grande), el paso ya no tiene que
+  repetirse en el Front: con `filtrar_a_base: true` el agente descarta las filas del resultado cuyo cliente
+  no está en la base del paso, cuenta cuántos clientes sacó (`clientes_fuera_de_base`) y lo deja como
+  alerta en el QA. Sin la opción, el chequeo "los conteos cuadran" sigue deteniendo el paso.
+- Por qué: el paso 4 de Andina AR se corrió con la base del paso 2 (52.095 clientes) en vez de la del
+  paso 3 (50.738); la persona eligió filtrar en vez de repetir el Front. Es opt-in para que un error de
+  base no pase en silencio.
+
+## 2026-11-23 · Paso 10: fuera los alojamientos tipo Airbnb / departamento
+
+- Qué: al armar los prospectos gold, después de quitar clientes y provincias fuera de territorio, se
+  quitan los puntos de alojamiento cuyo nombre dice Airbnb, apartamento, departamento o sus variantes
+  (`LODGING_RENTAL_REGEX`). El reporte ejecutivo los muestra como paso 10 y la metadata lleva el regex.
+- Por qué: la persona pidió "sacamos los puntos de venta que tengan que ver con airbnb, apartamento,
+  departamento y sus variantes", como paso adicional al Datamatch y en el reporte. El regex se calibró con
+  Andina AR: solo dentro de `sub_category = lodging` (fuera de ahí caían universidades y bares llamados
+  "Departamento"), sin `apto` ("apto celíacos"); hoteles, cabañas, suites y "alquiler temporario" quedan
+  hasta que la persona decida.
+
+## 2026-11-23 · Prospectos gold y CSV de priorización también sin comillas
+
+- Qué: los prospectos gold se escriben con `write_csv` (BOM, coma, CRLF, JSON de Dataplor aplanado a
+  `clave: valor | …`). En `Priorizacion_On_Premise_code`: `pipeline/csv_text.py` (`flat_text`,
+  `parse_scores`), el paso 1 lee `historical_popularity_scores` en JSON o aplanado, `save_csv` escribe sus
+  dos CSV con el mismo formato y `load_data` quita el BOM del primer encabezado. Se verificó con los
+  40.595 prospectos de Andina: mismos conteos de popularidad con JSON y con texto aplanado; el CSV escrito
+  no tiene comillas y se relee con las 65 columnas.
+- Por qué: la persona abre los prospectos en Google Sheets / LibreOffice y el JSON entre comillas se partía
+  en columnas ("el csv sigue viendose mal"). Antes se dejaba JSON porque la priorización hacía
+  `json.loads`; la persona eligió aplanar y ajustar la priorización. Esto reemplaza la excepción de la
+  entrada "\";\" y coma decimal" para los prospectos.
+
+## 2026-11-23 · Mapa: también los prospectos con score 0
+
+- Qué: el mapa dibuja los prospectos con ciudad, provincia y score de priorización, incluido 0; solo se
+  quedan fuera los que no tienen score.
+- Por qué: la persona pidió "en el mapa sí agrega los puntos con score = 0".
+
+## 2026-11-23 · CSV de los alojamientos eliminados
+
+- Qué: junto a los prospectos gold va `<prospectos>_eliminados_alojamiento_airbnb.csv` (id, nombre,
+  dirección, categoría, ciudad, provincia, coordenadas y la palabra del regex), y sube con ellos.
+- Por qué: "no veo en el repo los que salieron por AIRBNB".
+
+## 2026-11-23 · Excel del ciclo con la fila de alojamiento y priorización completa en gold
+
+- Qué: al armar los prospectos se reescribe el Excel del ciclo de Datamatch (`qa_process_report_<bottler>.xlsx`)
+  con una fila final "airbnb" en "Cuántos salieron en cada paso" (puntos Dataplor que salen de los
+  prospectos; "Quedan" = prospectos) y sube a su carpeta de silver con los prospectos. El paquete gold
+  lleva en la raíz `dataplor_on_premise_priority_<bottler>_<pais>_<AAAAMM>_completa.csv` con todas las
+  columnas de la priorización (con nombres y coordenadas: nunca en `results_ko`). El chequeo de privacidad
+  del KO relee el CSV con su separador real: con ";" fijo veía una sola columna y no revisaba nada.
+- Por qué: "no veo el airbnb acá, colócalo", "me falta un csv con las priorizaciones completas, no hablo
+  de bottler ni de KO" y "recuerda que KO no se debe mandar nada que identifique nombre, lat long".
+
+## 2026-11-23 · QA de prospección después del ciclo de Datamatch
+- Qué: nuevo paso entre `next_datamatch_step` (done) y `stage_prospects`, adaptado de la skill
+  `prospection-qa`: falsos negativos (prospecto a ≤ 300 m de un cliente con nombre distintivo parecido,
+  score 0,4·geo + 0,6·nombre ≥ 0,65), lectura por categoría, no_match enriquecido, dos mapas y reporte.
+- Decisiones de la persona: los falsos negativos se reportan y **ella decide** si salen de los prospectos;
+  el cruce de categorías, las no bebidas y el benchmark de mercado los hace **Claude Code en un
+  interrupt** (sin API); los archivos con nombres/coordenadas de clientes quedan **solo en el espejo
+  local** y solo sube el reporte agregado.
+- Por qué se apartó de la skill: folium carga Leaflet de un CDN (regla de mapas: solo teselas Esri, sin
+  librerías) → mapa propio sobre Esri; Nominatim mandaría coordenadas afuera → el país sale del intake;
+  la búsqueda web la hace Claude Code con el nombre del país; no se imprimen filas de clientes; el
+  no_match enriquecido trae columnas clave y no las 60+ del Dataplor; reporte con la marca Kin.
+
+
+## 2026-11-23 · Mapas con todos los prospectos, "Quedan hoy" del ciclo y 16 falsos negativos conservados
+- Qué: los dos mapas del paquete gold dibujan todo prospecto con lat/long y score (40.595 en Andina AR);
+  si falta ciudad o provincia se rotula "Sin ciudad" / "Sin provincia" en vez de descartarlo. El Excel del
+  ciclo separa los dos conteos: clientes que siguen sin su punto Dataplor (42.044, base del siguiente paso)
+  y prospectos finales (40.595), con la fila airbnb en su propia tabla "Después del ciclo". Los 16 posibles
+  falsos negativos del QA de prospección se conservan en los prospectos.
+- Por qué: "los mapas deben ser el mismo número que dices en el repo final de datamatch", "el excel
+  estaba mal actualizado el quedan hoy arréglalo" (el 42k de clientes se confundía con los 40k prospectos)
+  y la respuesta "Keep them" al QA.
+
+
+## 2026-11-23: mapas sin "Sin ciudad" y metadata solo con direcciones del DWH
+
+- Mapas: un prospecto con coordenadas y sin ciudad/provincia toma la del prospecto más cercano que la tiene
+  (haversine, offline). Ninguna coordenada sale a un servicio de geocodificación. Los CSV no cambian.
+- Metadata: cada `_metadata.json`, `_qa.html`, metadata de la base de clientes y linaje nombra archivos por
+  su dirección en el DWH (`<contenedor>/<blob>`); lo que no está en el DWH queda relativo al proyecto o solo
+  con el nombre. Se quita `espejo_local`. Los 53 sidecars del espejo local se reescribieron así.
+- Por qué: "el mapa me hace ruido existe un sin… si no tiene ciudad búscala por su lat long… si no
+  encuentras dale el punto a la ciudad más cercana" y "el metadata no debe estar ligado a mi local siempre
+  y únicamente al dwh porque si no otra persona no va a poder".
+
+
+## 2026-11-23: Airbnb en la limpieza, clientes obligatorios con territorio, paso 0 y registro de prospección
+
+- Airbnb / departamentos: módulo 7 de la limpieza, siempre activo, con hoja "Airbnb" en el Excel del reporte
+  ejecutivo. El cierre del Datamatch queda como red de seguridad (0 en corridas nuevas).
+  Por qué: "lo de Airbnb es un paso que se debe agregar al pipeline de limpieza y también sacar su hojita en el
+  proceso donde eliminamos las franquicias".
+- Validación de clientes bottler obligatoria; pide el GeoJSON del territorio o lo busca en
+  `prospection-datacleaning/global_geojson/`, y marca cada cliente dentro/fuera (no se quitan: siguen siendo
+  clientes). Por qué: "la limpieza de clientes bottler es obligatoria, adicional pide el geojson o búscalo en el
+  dwh, esto para cruzar con la localidad o donde los bottlers trabajan".
+- Paso 0 en el reporte ejecutivo: raw, quitados antes del Front, enviados, eliminados en el Front, recibidos.
+  Por qué: "agrega en el paso 0 cuántos vienen de raw y cuántos se eliminaron en el front".
+- Registro de prospección de 16 campos (nombres y orden del usuario) en cada sidecar gold y en el linaje;
+  lo desconocido queda "POR COMPLETAR". "Iteración" = pasos de Datamatch del ciclo (confirmado por el usuario, 2026-11-23).
+  Por qué: "la metadata final debe responder Fecha Corrida (Prosp.) … Fecha de Registro (Prosp.)".
+- Metadata del espejo ya publicada (36 blobs: 34 sidecars + 2 mapas) reemplazada en su lugar con OK explícito
+  ("Replace in place"), verificada por tamaño y MD5.
+
+- El apartado del metadata gold se llama `vtm` (usuario, 2026-11-23: "en gold en el metadato debe existir un apartado vtm con los datos que te solicité").
+
+- Airbnb en el reporte = paso 8 (después del filtro de canal, 7); el módulo corre al final de la limpieza.
+  Los departamentos que ya quita el regex final quedan en el paso 5 (Andina: 172 en el paso 5, 242 en el 8).
+  Por qué: "no es mejor como ponerle como un paso más para que sea 8", eligiendo la opción que no mueve los
+  pasos existentes.
+
+- Los 8 pasos de limpieza (módulos 1–6, canal 7, Airbnb 8) vienen activos por defecto en el plan
+  (`config.yaml` y el respaldo de `settings.py`). Por qué: "pero para manten activado por defecto los 8 pasos".
+  El módulo 0 (solo nocturnos) sigue opcional: activarlo quita el módulo 5 y deja solo bares.
+
+- El sidecar de linaje por etapa ya no pisa el `_metadata.json` de capa (QA, destinos, `vtm`): se agrega dentro
+  como `etapa_linaje`. Por qué: en la corrida Andina 20261123, 7 de 8 sidecars del paquete gold quedaron solo con
+  linaje (sin QA ni `vtm`); lo detectó la réplica local e2e del 2026-11-23.
+
+- Comando `sidecars` (2026-11-23): reescribe solo `_metadata.json`/`_qa.html` de un paquete gold ya armado (QA, `vtm`,
+  `etapa_linaje` desde el linaje del hilo), sin tocar los datos. Por qué: "actualiza todo y déjalo para que otro pueda usar
+  este proceso sin necesidad de esta sesión"; el arreglo de Andina 20261123 no debe depender de un script de la sesión.
+  `--clientes-crudos` existe porque los hilos que validaron clientes con `clean-clients` no guardaron la base cruda.
+  Andina 20261123 regenerado en local con la base `prospecting-data/drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv`.

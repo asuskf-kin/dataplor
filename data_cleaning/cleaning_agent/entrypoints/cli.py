@@ -14,6 +14,7 @@ questions loses nothing; ``resume`` continues the same thread.
     uv run python -m cleaning_agent interactive
     uv run python -m cleaning_agent graph          # Mermaid diagram
     uv run python -m cleaning_agent maps --thread <id> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>
+    uv run python -m cleaning_agent sidecars --thread <id> --gold-dir data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>
 """
 
 import argparse
@@ -21,6 +22,7 @@ import json
 import logging
 import secrets
 import sys
+import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import datetime
@@ -32,15 +34,32 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
+from pydantic import ValidationError
 
+from cleaning_agent.adapters.lineage import STAGE_KEY
 from cleaning_agent.application.graph.builder import RECURSION_LIMIT, build_graph
-from cleaning_agent.application.graph.gold_nodes import gold_request
+from cleaning_agent.application.graph.delivery_nodes import datamatch_cycle_reset
+from cleaning_agent.application.graph.gold_nodes import (
+    gold_request,
+    write_package_sidecars,
+)
 from cleaning_agent.application.graph.progress import progress_markdown, step_view
 from cleaning_agent.application.graph.state import CleaningState
+from cleaning_agent.domain.lineage import StageRecord
+from cleaning_agent.domain.models import DatamatchInputs
+from cleaning_agent.domain.warehouse import Layer, layer_prefix
 from cleaning_agent.settings import PROJECT_ROOT
-from cleaning_agent.wiring import checkpoints_path, default_dependencies
+from cleaning_agent.wiring import checkpoints_path, default_dependencies, dwh_paths
 
 MAX_ANSWER_CHARS = 20_000
+# Step rules a redo may change (see run_redo)
+DATAMATCH_RULES = {
+    "umbral",
+    "distancia_match_m",
+    "solo_distancia",
+    "enfoque",
+    "filtrar_a_base",
+}
 THREAD_ID_MAX = 100
 
 
@@ -165,8 +184,20 @@ def run_start(
     return describe(app, thread_id)
 
 
+def _split_states(raw: str | None) -> list[str] | None:
+    """``--excluir-estados "A, B"`` -> ["A", "B"]; an empty value clears the list."""
+    if raw is None:
+        return None
+    return [s.strip() for s in raw.split(",") if s.strip()]
+
+
 def run_redo(
-    app: CompiledStateGraph[Any, Any, Any, Any], thread_id: str, after: str
+    app: CompiledStateGraph[Any, Any, Any, Any],
+    thread_id: str,
+    after: str,
+    umbral: float | None = None,
+    datamatch_rules: dict[str, Any] | None = None,
+    excluded_states: list[str] | None = None,
 ) -> dict[str, Any]:
     """Time travel: forks the thread as if ``after`` just finished and runs on.
 
@@ -181,8 +212,33 @@ def run_redo(
     reset: dict[str, Any] = {"errors": [], "attempts": 0}
     # A redo reruns a step after its code was fixed: an earlier failure must not route
     # the fork straight to the end
-    if app.get_state(_config(thread_id)).values.get("status") == "failed":
+    values = app.get_state(_config(thread_id)).values
+    if values.get("status") == "failed":
         reset |= {"status": "running", "error": None}
+    # Going back to before the Datamatch loop starts a new cycle (no old steps)
+    reset |= datamatch_cycle_reset(after, cast(CleaningState, values))
+    if umbral is not None:
+        # Threshold chosen on the step's threshold page (same bounds as the answer field)
+        if not 0 < umbral < 1:
+            raise SystemExit("--umbral must be between 0 and 1")
+        datamatch = reset.get("datamatch") or values.get("datamatch") or {}
+        reset["datamatch"] = {**datamatch, "umbral": umbral}
+    if excluded_states is not None:
+        # Provinces the bottler does not serve: rebuilt prospects leave them out
+        reset["excluded_states"] = excluded_states
+    if datamatch_rules:
+        # Step rules changed after reading its reports (umbral, distancia_match_m,
+        # solo_distancia): validated with the same model as the front_datamatch answer
+        unknown = set(datamatch_rules) - DATAMATCH_RULES
+        if unknown:
+            raise SystemExit(f"--datamatch accepts only {sorted(DATAMATCH_RULES)}")
+        datamatch = reset.get("datamatch") or values.get("datamatch") or {}
+        merged = {**datamatch, **datamatch_rules}
+        try:
+            DatamatchInputs.model_validate(merged)
+        except ValidationError as exc:
+            raise SystemExit(f"--datamatch: {exc}") from exc
+        reset["datamatch"] = merged
     app.update_state(_config(thread_id), reset, as_node=after)
     _drive(app, None, thread_id)
     return describe(app, thread_id)
@@ -297,6 +353,107 @@ def run_maps(
     return {"status": "done", "thread_id": thread_id, "maps": maps}
 
 
+def run_sidecars(
+    app: CompiledStateGraph[Any, Any, Any, Any],
+    thread_id: str,
+    gold_dir: Path,
+    raw_clients: str | None = None,
+) -> dict[str, Any]:
+    """Rewrite the ``_metadata.json`` + ``_qa.html`` (QA, destinations, ``vtm``) of a
+    finished run's gold package, leaving its data files untouched.
+
+    The package is rebuilt in a temporary folder only to recover its figures; the
+    files in ``gold_dir`` (CSV, Excel, maps, deck) are never rewritten. A lineage-only
+    sidecar left by older code is kept inside the new one as ``etapa_linaje``. The new
+    sidecars stay in the local mirror; replacing them in Azure is a separate decision.
+
+    ``raw_clients``: the original client base, for threads whose validation ran outside
+    the graph (``clean-clients``) and so never recorded it (vtm "Path Info Cruda Clientes").
+    """
+    folder = gold_dir if gold_dir.is_absolute() else PROJECT_ROOT / gold_dir
+    if not (folder / "results_ko").is_dir():
+        raise SystemExit(f"{gold_dir} is not a gold package folder (no results_ko/)")
+    today = folder.name
+    if not (today.isdigit() and len(today) == 8):
+        raise SystemExit(f"{gold_dir} must end in the package date (yyyymmdd)")
+    state = app.get_state(_config(thread_id)).values
+    if not state:
+        raise SystemExit(f"Thread {thread_id} does not exist")
+    deps = default_dependencies()
+    run_state = cast(CleaningState, state)
+    if raw_clients:
+        validation = dict(run_state.get("clients_validation") or {})
+        run_state = cast(
+            CleaningState,
+            {**run_state, "clients_validation": {**validation, "clients_file": raw_clients}},
+        )
+    prefix = layer_prefix(
+        Layer.GOLD,
+        run_state.get("country", ""),
+        run_state.get("bottler", ""),
+        today,
+        deps.prospects_template,
+    )
+    with tempfile.TemporaryDirectory(prefix="gold_sidecars_") as tmp:
+        scratch = Path(tmp)
+        result = deps.gold_package.build(gold_request(deps, run_state, scratch))
+
+        def here(paths: list[str]) -> list[str]:
+            return [str(folder / Path(p).relative_to(scratch)) for p in paths]
+
+        real = result.model_copy(
+            update={
+                "root": here(result.root),
+                "ko": here(result.ko),
+                "bottler": here(result.bottler),
+            }
+        )
+    files = [*real.root, *real.ko, *real.bottler]
+    missing = [Path(p).name for p in files if not Path(p).is_file()]
+    if missing:
+        raise SystemExit(f"Not in {gold_dir} (rebuild the package instead): {missing}")
+    staged, registry, qa = write_package_sidecars(
+        deps, run_state, gold_request(deps, run_state, folder), real, prefix, today
+    )
+    if not qa["qa_ok"]:
+        raise SystemExit(f"Package QA failed, sidecars not written: {qa['checks']}")
+    # The package's lineage record goes inside each sidecar, as the graph does now;
+    # taken from the thread (not the old sidecar) so a second run gives the same result
+    records = [
+        StageRecord.model_validate(r)
+        for r in run_state.get("lineage") or []
+        if r.get("stage") == "stage_gold_package"
+    ]
+    if records:
+        record = records[-1]
+        by_name = {Path(o.path).name: o for o in record.outputs}
+        resolver = dwh_paths()
+        for path in files:
+            output = by_name.get(Path(path).name)
+            if output is None:
+                continue
+            target = _sidecar(path)
+            meta = json.loads(target.read_text(encoding="utf-8"))
+            stage = {**record.model_dump(), "archivo": output.model_dump(exclude_none=True)}
+            target.write_text(
+                json.dumps(
+                    {**meta, STAGE_KEY: resolver.portable(stage)}, ensure_ascii=False, indent=2
+                ),
+                encoding="utf-8",
+            )
+    return {
+        "status": "done",
+        "thread_id": thread_id,
+        "sidecars": [p for group in staged.values() for p in group if p not in files],
+        "vtm": dwh_paths().portable(registry),
+    }
+
+
+def _sidecar(path: str) -> Path:
+    file = Path(path)
+    return file.with_name(f"{file.stem}_metadata.json")
+
+
 def main(argv: list[str] | None = None) -> int:
     # Windows consoles default to cp1252; the questions are in Spanish
     for stream in (sys.stdout, sys.stderr):
@@ -336,7 +493,38 @@ def main(argv: list[str] | None = None) -> int:
     )
     redo.add_argument("--thread", required=True)
     redo.add_argument("--after", required=True, help="Node whose next steps re-run")
+    redo.add_argument(
+        "--datamatch",
+        default=None,
+        help='Datamatch step rules as JSON, e.g. {"distancia_match_m": 25, "solo_distancia": true}'
+        ' or {"filtrar_a_base": true} when the Front ran with an older client base',
+    )
+    redo.add_argument(
+        "--excluir-estados",
+        default=None,
+        help='Provinces out of the bottler territory, comma separated (e.g. "Buenos Aires")',
+    )
+    redo.add_argument(
+        "--umbral",
+        type=float,
+        default=None,
+        help="Datamatch cleanup threshold for the redone step (0-1)",
+    )
     sub.add_parser("graph", help="Print the graph as Mermaid")
+    clean = sub.add_parser(
+        "clean-clients",
+        help="Paso 1 bottler: valida la base de clientes (canal, coordenadas dentro del país, QA)",
+    )
+    clean.add_argument("--src", required=True, help="CSV original de clientes")
+    clean.add_argument("--country", required=True, help="ISO 2, p. ej. ar")
+    clean.add_argument("--bottler", required=True, help="p. ej. andina")
+    clean.add_argument("--fecha", help="yyyymmdd de la carpeta destino (hoy por defecto)")
+    clean.add_argument(
+        "--canal",
+        default="todos",
+        choices=["todos", "tradicional", "moderno", "ambos"],
+        help="todos = no filtra por canal",
+    )
     maps = sub.add_parser(
         "maps", help="Rebuild only the maps of a run's gold package (local mirror)"
     )
@@ -346,12 +534,41 @@ def main(argv: list[str] | None = None) -> int:
         required=True,
         help="Package folder, e.g. data/gold/ko/ar/andina/prospecting-data/20261111",
     )
+    sidecars = sub.add_parser(
+        "sidecars",
+        help="Rewrite the metadata + QA pages (with vtm) of a run's gold package (local mirror)",
+    )
+    sidecars.add_argument("--thread", required=True)
+    sidecars.add_argument(
+        "--gold-dir",
+        required=True,
+        help="Package folder, e.g. data/gold/ko/ar/andina/prospecting-data/20261123",
+    )
+    sidecars.add_argument(
+        "--clientes-crudos",
+        default=None,
+        help="Original client base (DWH path) when the thread did not record it",
+    )
     args = parser.parse_args(argv)
+
+    if args.command == "sidecars":
+        with open_app() as app:
+            view = run_sidecars(
+                app, _check_thread_id(args.thread), Path(args.gold_dir), args.clientes_crudos
+            )
+        print(json.dumps(view, ensure_ascii=False, indent=2))
+        return 0
 
     if args.command == "maps":
         with open_app() as app:
             view = run_maps(app, _check_thread_id(args.thread), Path(args.gold_dir))
         print(json.dumps(view, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.command == "clean-clients":
+        from cleaning_agent.entrypoints.clients_clean import clean_clients_command
+
+        print(json.dumps(clean_clients_command(args), ensure_ascii=False, indent=2))
         return 0
 
     if args.command == "graph":
@@ -373,7 +590,14 @@ def main(argv: list[str] | None = None) -> int:
             elif args.command == "status":
                 view = describe(app, thread_id)
             elif args.command == "redo":
-                view = run_redo(app, thread_id, args.after)
+                view = run_redo(
+                    app,
+                    thread_id,
+                    args.after,
+                    args.umbral,
+                    _parse_answer(args.datamatch) if args.datamatch else None,
+                    _split_states(args.excluir_estados),
+                )
             else:
                 view = run_interactive(app, thread_id)
         except (

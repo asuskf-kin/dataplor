@@ -105,20 +105,24 @@ def test_step_metric_dropped():
 
 
 def test_build_module_plan_orders_dedups_and_skips_regex_with_nightlife():
-    assert build_module_plan([3, 1, 1]) == ([1, 3], [])
+    # Module 7 (Airbnb) always runs, even when the plan leaves it out
+    modules, notes = build_module_plan([3, 1, 1])
+    # ...last, after modules 0-6 (step 8 in the report)
+    assert modules == [1, 3, 7] and "always run" in notes[0]
+    assert build_module_plan([3, 1, 7]) == ([1, 3, 7], [])
     modules, notes = build_module_plan([5, 0, 6])
-    assert modules == [0, 6] and "Module 5 skipped" in notes[0]
+    assert modules == [0, 6, 7] and any("Module 5 skipped" in n for n in notes)
 
 
 def test_build_module_plan_rejects_unknown_or_empty():
     with pytest.raises(ValueError, match="Unknown modules"):
-        build_module_plan([7])
+        build_module_plan([9])
     with pytest.raises(ValueError, match="at least one"):
         build_module_plan([])
 
 
 def test_catalog_is_built_per_country():
-    assert sorted(catalog_for("mx")) == [0, 1, 2, 3, 4, 5, 6]
+    assert sorted(catalog_for("mx")) == [0, 1, 2, 3, 4, 5, 6, 7]
     assert chain_regex_for("do") == chain_regex_for("rd")  # ISO 2 alias
     assert "rd" not in supported_countries() and "do" in supported_countries()
     with pytest.raises(ValueError, match="No chain patterns"):

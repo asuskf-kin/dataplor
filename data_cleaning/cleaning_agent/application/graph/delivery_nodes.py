@@ -24,13 +24,16 @@ from cleaning_agent.application.graph.nodes import (
     bottler_folder,
     layer_dir,
     record_stage,
+    upstream_of,
 )
+from cleaning_agent.application.graph.progress import STEP_ORDER
 from cleaning_agent.application.graph.state import CleaningState
 from cleaning_agent.application.graph.warehouse_nodes import (
     check_remote,
     with_dwh_container,
 )
 from cleaning_agent.domain.lineage import (
+    DECISIONS_FILE,
     LINEAGE_FILE,
     StageRecord,
     build_lineage_document,
@@ -298,6 +301,7 @@ def make_executive_report(deps: Dependencies) -> NodeFn:
                 # gets a copy of the Excel + metadata later (user, 2026-11-10)
                 layer_dir(deps, state, Layer.SILVER),
                 layer_dir(deps, state, Layer.SILVER),
+                upstream=upstream_of(state),
             )
         except DELIVERY_ERRORS + (KeyError,) as exc:
             _logger(state).warning("Executive report failed: %s", exc)
@@ -349,10 +353,42 @@ def make_build_lineage(deps: Dependencies) -> NodeFn:
             "status": state.get("status"),
             "code_version": deps.lineage.code_version(),
         }
-        document = build_lineage_document(records, run, list(state.get("warnings", [])))
+        run_dir = deps.runs_dir / state["run_id"]
+        document = build_lineage_document(
+            records,
+            run,
+            list(state.get("warnings", [])),
+            deps.lineage.read_decisions(run_dir / DECISIONS_FILE),
+        )
+        if state.get("registro_prospeccion"):
+            # The final metadata answers the team's prospection log (user, 2026-11-23)
+            document = {"vtm": state["registro_prospeccion"], **document}
         path = deps.lineage.write_document(
-            document, deps.runs_dir / state["run_id"] / LINEAGE_FILE
+            document, run_dir / LINEAGE_FILE
         )
         return {"lineage_path": path}
 
     return build_lineage
+
+
+def datamatch_cycle_reset(after: str, state: CleaningState) -> Update:
+    """State to clear when a redo goes back to before the Datamatch loop.
+
+    Rewinding there means a new Datamatch cycle (e.g. with a validated client base):
+    the old steps must not count as done, and the new cycle gets today's qa_process
+    folder instead of writing on top of the one already published. Only the client
+    name is kept from the old Front answer.
+    """
+    order = [name for name, _ in STEP_ORDER]
+    if after not in order or order.index(after) >= order.index("front_datamatch"):
+        return {}
+    client = (state.get("datamatch") or {}).get("client_name")
+    return {
+        "datamatch": {"client_name": client} if client else None,
+        "datamatch_history": [],
+        "datamatch_loop_done": False,
+        "datamatch_skipped": False,
+        "qa_process_date": "",
+        "clients_validation": None,
+    }
+

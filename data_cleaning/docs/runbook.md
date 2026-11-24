@@ -45,6 +45,7 @@ uv run python -m cleaning_agent status  --thread <thread_id>
 uv run python -m cleaning_agent resume  --thread <thread_id> --answer '<json>'
 uv run python -m cleaning_agent redo    --thread <thread_id> --after <node>   # rerun from a step
 uv run python -m cleaning_agent maps    --thread <thread_id> --gold-dir <gold package folder>   # rebuild only the maps
+uv run python -m cleaning_agent sidecars --thread <thread_id> --gold-dir <gold package folder>  # rewrite only the gold metadata (vtm)
 ```
 
 Every run is a thread saved in `data/checkpoints.sqlite`: close the terminal between questions and resume
@@ -61,27 +62,39 @@ Each row is one stop of the agent (`interrupt.kind`). "You" = the operator.
 | 1 | **Intake**: country (ISO 2), bottler, tradicional/moderno, on/off premise/ambos, Dataplor raw path | e.g. `ar`, `andina`, `tradicional`, `on_premise`, `dataplor_raw_parquet/2026-10-15_ar.csv.parquet/part-0000…snappy.parquet` (container `dataplorraw` by default) | The raw starts downloading in the background. |
 | 2 | **¿Va a limpiar el Dataplor?** | sí por distancia (GeoJSON) · sí por client bottler · no | Decides the pre-filter. |
 | 3 | **Inputs**: GeoJSON of the territory or the client CSV | e.g. `prospection-datacleaning/global_geojson/Argentina_Andina.geojson` | Downloaded next to the raw (`data/raw/<pais>/<bottler>/insumos/`). |
-| 4 | **Plan** (mode, paths, modules 1–6) | approve, or change modules | Pre-filter runs (minutes on a full country). |
+| 4 | **Plan** (mode, paths, modules 1–7) | approve, or change modules | The 8 cleaning steps come on by default (modules 1–6, channel filter 7, Airbnb 8 = module 7). Module 7 always runs, even if left out; module 0 (nightlife only) is opt-in and skips module 5. Pre-filter runs (minutes on a full country). |
 | 5 | **Bronze upload** — QA page + metadata of the pre-filtered parquet | approve / keep local | Uploaded to bronze + a copy beside the raw (`…/distance/<fecha>/`). |
 | 6 | **Front (Dataplor)** — the agent gives you the bronze files | Run the Dataplor step in the Front, then give the result CSV path and its `json_config.json` | Default container: `prospection-datacleaning`. |
 | 7 | **Patterns** (only when the country file is missing or > 6 months old) | review Claude's diff of `patterns_<iso2>.py`, approve | Chain/franchise regex updated. |
-| 8 | **Franchise review** — Claude lists remaining franchises (OXXO, Costco…) | confirm the list, then *remove* yes/no | Marked rows; `_sin_franquicias.csv` when removed. |
-| 9 | **Silver upload** — cleaned parquet, drop report, executive report (HTML/PDF/Excel) | approve | `silver/ko/<pais>/<bottler>/dataplor/<fecha>/`. |
+| 8 | **Franchise review** — Claude lists remaining franchises (OXXO, Costco…) | confirm the list, then *remove* yes/no | Marked rows; `_sin_franquicias.csv` when removed. The Airbnb points (module 7) are already out of it. |
+| 9 | **Silver upload** — cleaned parquet, drop report, executive report (HTML/PDF/Excel) | approve | `silver/ko/<pais>/<bottler>/dataplor/<fecha>/`. The report opens with **Paso 0** (raw rows → removed before the Front → sent to the Front → removed in the Front → received) and the Excel has an **Airbnb** sheet (each rented flat removed, with the word that matched). |
 | 10 | **Gold upload** — executive Excel + metadata | approve | `gold/ko/<pais>/<bottler>/dataplor/<fecha>/`. |
+| 10b | **Validación de clientes bottler — obligatoria** (once, before the first Datamatch step) | the client CSV (default: the one given earlier), the channel (`todos` by default) and the **GeoJSON of the bottler's territory** (default: the run's own, or the one found in `prospection-datacleaning/global_geojson/` whose name carries the bottler; `territory_candidates` lists them). It cannot be skipped. | Validated base (+ `territorio_bottler` column: zone or "Fuera del territorio"; clients outside are marked, never removed) + metadata + QA with map in `bronze/ko/<pais>/<bottler>/clients/<fecha>/`; after you approve the upload it becomes the default client base of step 11. Only a country without configured limits skips it (warning in the log). |
 | 11 | **Front (Datamatch) — step N** | Run Datamatch in the Front with the step JSON (`paso1.json`…). Give the result path (e.g. `silver/ko/ar/andina/<…>_data_match_process/<fecha>/final_output.csv`, container `prospecting-data`), the client base path and the JSON | The agent downloads both. |
-| 12 | **Datamatch step upload** — reduced client base, matches, JSON, cycle Excel | approve | `silver/…/data_match_process/qa_process/<fecha>/pasoN/` + report in `<fecha>/`. |
+| 12 | **Datamatch step upload** — reduced client base, matches, JSON, step `_qa.html`, cycle Excel | approve | `silver/…/data_match_process/qa_process/<fecha>/pasoN/` + report in `<fecha>/`. |
 | 13 | **¿Otro paso o seguimos?** | another step → back to 11 with the reduced client base as default · done → continue | Loop until you say done. |
+| 13b | **QA de prospección** — Claude Code maps the categories and looks up the market; then, if it found prospects that look like clients (false negatives), you decide | remove · keep | Report in `silver/…/qa_process/<fecha>/` (goes up with the prospects); maps, Excel files and the false-negative list stay in the local mirror (`…/prospection_qa/`). |
 | 14 | **Gold prospects** — cleaned Dataplor minus every matched point | approve | `gold/ko/<pais>/<bottler>/prospecting-data/<fecha>/prospects_*.csv`. |
 | 15 | **Priorización** — config, period, input (the prospects), output dir | run (it writes to Azure itself, 15–50 min) | `bronze/ko/<pais>/<bottler>/providers/dataplor_on_premise_priority_<bottler>_<pais>/<fecha>/`. |
 | 16 | **Priorización metadata** — QA of both outputs | approve | Sidecars uploaded; the CSVs are verified, not re-sent. |
-| 17 | **Gold delivery package** — KO/BOTTLER CSVs and maps, opportunity Excel, deck | approve | `gold/…/prospecting-data/<fecha>/` + `results_ko/` + `results_bottler/`. |
-| — | **Lineage** | — | `data/runs/<thread>/dataplor_pipeline_metadata.json`. |
+| 17 | **Gold delivery package** — KO/BOTTLER CSVs and maps, opportunity Excel, deck | approve | `gold/…/prospecting-data/<fecha>/` + `results_ko/` + `results_bottler/`. Every sidecar carries the section `vtm` (the 16 fields of the team's log, spec §5.1). |
+| — | **Lineage** | — | `data/runs/<thread>/dataplor_pipeline_metadata.json`, with the `vtm` section first. |
 
 Every upload shows the files, the destination and the QA before anything leaves the machine. Answer
 `{"approved": false}` to keep a layer local. An existing blob is never overwritten unless you answer
 `"replace": true`; after every upload the agent checks size and MD5.
 
 ### The Datamatch loop (step 11–13)
+
+The agent validates the client base itself at step 10b. To do it outside a run (canal `todos` keeps every
+channel: a prospect that is already a client of another channel is still a client):
+
+```bash
+uv run python -m cleaning_agent clean-clients --src "data/drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv" --country ar --bottler andina --canal todos
+```
+
+Review `<name>_qa.html` in `data/bronze/ko/<pais>/<bottler>/clients/<fecha>/` and use the CSV as the client
+base of step 1. The country polygon is read from `data/reference/limites/<pais>/` (IGN for AR, no network).
 
 1. In the Front, run Datamatch with the client base of this step and the step JSON (`pasoN.json`).
 2. Give the agent the result (`final_output.csv`), the client base and the JSON.
@@ -110,13 +123,27 @@ Every upload shows the files, the destination and the QA before anything leaves 
   average score or n.º de prospectos, points by existence or score, H3 resolution Auto/7/8/9), **Ubicación**,
   **Filtros**, **Capas**. The floating legend shows the real quintile ranges of what is on screen; hover a hexagon
   for its tooltip, click to zoom one level. The **KO** map has hexagons only (no points, no clients, no
-  coordinates), like the KO CSV; the **Bottler** map adds points and clients. Prospects without city, province or a score above 0 are not drawn
-  (the subtitle says how many); the CSVs keep them.
+  coordinates), like the KO CSV; the **Bottler** map adds points and clients. A prospect without city or province
+  takes the one of the nearest prospect that has it (offline, no geocoding service); only a point without
+  coordinates or without a priorización score is left out (score 0 is drawn). The CSVs keep the data as delivered.
+- **Metadata is portable**: every `_metadata.json`, `_qa.html` and the lineage name files by their warehouse
+  address (`prospecting-data/<layer>/…`, `dataplorraw/…`, `prospection-datacleaning/…`), never a path on your
+  disk, so another person can follow them from the DWH.
+- **Registro de prospección**: copy the `vtm` section from the lineage (or any gold `_metadata.json`) into
+  the team's log. Fields it cannot know say `POR COMPLETAR`: set `registro_prospeccion.responsable` and
+  `registrado_por` in `config.yaml` before the run to fill them.
 - **Rebuild the maps after a map change** (code in `cleaning_agent/adapters/prospection_map.py`), without
   rerunning the package: `uv run python -m cleaning_agent maps --thread <thread_id> --gold-dir
   data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`. Only the two map HTMLs change; CSV, Excel and deck keep
   their bytes. Files already in Azure are not replaced (no re-upload rule): publishing the new maps is a separate
   decision (new dated folder, with the person's OK).
+- **Rewrite the gold metadata of an older package** (built before 2026-11-23: its `_metadata.json` hold lineage
+  only, no QA and no `vtm`): `uv run python -m cleaning_agent sidecars --thread <thread_id> --gold-dir
+  data/gold/ko/<pais>/<bottler>/prospecting-data/<fecha>`. If the client validation ran outside the thread
+  (`clean-clients`), add `--clientes-crudos <container>/<blob of the original client base>` so the `vtm` names the raw
+  base and its date. Only `_metadata.json` / `_qa.html` change (data files keep their bytes); the stage lineage stays
+  inside as `etapa_linaje`; running it twice gives the same files. Replacing the sidecars in Azure is a separate,
+  confirmed upload (`"replace": true`).
 - **Commit**: code changes only; `data/` and `.env` are git-ignored.
 
 ---
@@ -126,7 +153,10 @@ Every upload shows the files, the destination and the QA before anything leaves 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Map changed in code but the run's maps are old | maps are built once with the package | `maps --thread <id> --gold-dir <package folder>` (section 4). |
+| Gold `_metadata.json` without `vtm` or QA (only `run_id`, `stage`, …) | package built before 2026-11-23: the lineage writer replaced the sidecars | `sidecars --thread <id> --gold-dir <package folder>` (section 4). |
 | A step failed after a code fix | the thread keeps the old result | `redo --after <previous node>`; a failed status is reset automatically. |
+| Client validation asks again with "territorio_geojson" | no territory GeoJSON given or found | give `<container>/<blob>` of the bottler's territory (e.g. `prospection-datacleaning/global_geojson/Argentina_Andina.geojson`) or a local file. |
+| `paso 0` missing in the report | run without a bronze prefilter (mode "no") | expected: only "received from the Front" is known. |
 | "ya existe con otro contenido" at an upload | the blob exists with other bytes | answer `"replace": true` only if you mean to replace it. |
 | Priorización CSVs "exist with other content" | priorización uploads without Content-MD5 | handled: only sidecars are uploaded, CSVs are verified by the download. |
 | Very few Datamatch matches, `distance_score` always 0 | client base with latitude/longitude swapped | the gold package detects and flags it; fix the column mapping in the Front JSON (latitude = the column that really holds latitudes) and rerun Datamatch. |

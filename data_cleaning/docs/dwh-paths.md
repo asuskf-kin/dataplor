@@ -8,6 +8,8 @@ decisions in `DECISIONS.md`:
 - `<fecha>` = `yyyymmdd`; the run date for bronze/silver, the current date for the steps marked *today*;
 - every file ships with `<archivo>_metadata.json` and (layer files) `<archivo>_qa.html`, is mirrored under
   `data/` with the same path first, and is uploaded only after the person approves;
+- metadata and lineage name files by their warehouse address (`<container>/<blob>`), never by a local path,
+  so anyone can follow them from the DWH (`adapters/dwh_paths.py`, spec §5);
 - no re-upload (same size + MD5 → skipped), replace only with explicit `replace: true`.
 
 Every template below lives in `config.yaml`; never write a path by hand in code.
@@ -22,7 +24,8 @@ Every template below lives in `config.yaml`; never write a path by hand in code.
 | Gold (executive Excel) | `prospecting-data` | `gold/ko/ar/andina/dataplor/20261109/` | `reporte_ejecutivo_*.xlsx` + metadata | `dwh.path_template` |
 | Datamatch result (input) | `prospecting-data` | `silver/ko/ar/andina/20261110_data_match_process/20261110/final_output.csv` (written by the Front) | — | — |
 | Client base (input) | `prospecting-data` | `drop_zone/ko/ar/andina/clients_bottler/20261020/Listado clientes Andina.csv` | — | — |
-| Datamatch loop, step N (*today*) | `prospecting-data` | `silver/ko/ar/andina/data_match_process/qa_process/20261111/pasoN/` | reduced client base, matches, `pasoN.json`, sidecars | `datamatch.qa_process_template` |
+| Client base validated (step 1 bottler, *today*) | `prospecting-data` | `bronze/ko/ar/andina/clients/20261123/` | `listado_clientes_andina_todos_validos.csv` + sidecars (`clean-clients`) | `clients_bottler.output_template` |
+| Datamatch loop, step N (*today*) | `prospecting-data` | `silver/ko/ar/andina/data_match_process/qa_process/20261111/pasoN/` | reduced client base, matches, `pasoN.json`, `datamatch_<bottler>_pasoN_qa.html`, sidecars | `datamatch.qa_process_template` |
 | Datamatch cycle report (*today*) | `prospecting-data` | `silver/ko/ar/andina/data_match_process/qa_process/20261111/` | `qa_process_report_andina.xlsx` + metadata (rewritten each step: `replace: true` from step 2) | same |
 | Gold prospects (*today*) | `prospecting-data` | `gold/ko/ar/andina/prospecting-data/20261111/` | `prospects_pdv_trad_on_ar_andina_20261111.csv` + sidecars | `datamatch.prospects_template` |
 | Priorización (*today*) | `prospecting-data` | `bronze/ko/ar/andina/providers/dataplor_on_premise_priority_andina_argentina/20261111/` | `1_priority_andina_argentina_202611.csv`, `dataplor_on_premise_priority_andina_argentina_202611.csv` + sidecars | `priorizacion.output_template` |

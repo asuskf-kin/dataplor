@@ -64,6 +64,11 @@ Cada fallo se atribuye a una capa y se arregla esa capa (diagnostic loop), no se
 - **Lost in the middle**: lo crítico va al principio o al final, nunca en medio.
 - **Cada regla lleva** su origen, cuándo aplica y cuándo caduca. Se auditan y se borran las obsoletas o
   contradictorias.
+- **Contexto en cuatro estrategias (Write-Select-Compress-Isolate)**: escribir estado y conclusiones a archivos;
+  seleccionar solo lo necesario (el archivo raíz apunta, se lee a demanda); comprimir con criterio, sin pérdida antes
+  que con pérdida; aislar con subagentes que no inflan el contexto principal. Cargar skills a demanda además cuida la
+  prompt cache (costo). Marco de la comunidad mapeado a Codex. [R harness-designs codex, claude-code, pi]
+  (https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/harness-designs/codex/index.md, 2026-11-23; https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/harness-designs/pi/index.md, 2026-11-23)
 - **Imponer invariantes, no microgestionar la implementación.** Por ejemplo, "datos parseados en la frontera", sin
   dictar la librería.
 - **La evidencia es mixta**: ETH Zurich encontró que AGENTS.md no mejora el éxito y sube el costo más de 20 %;
@@ -82,6 +87,10 @@ Cada fallo se atribuye a una capa y se arregla esa capa (diagnostic loop), no se
   o e2e → **si la base está rota, se arregla primero** → una sola feature hasta verificarla o declararla bloqueada.
 - **Clean state al salir**: build y tests pasan, progreso y feature list actualizados, sin debug ni temporales, el
   arranque estándar funciona. **Sesión completa = tarea verificada + clean state.**
+- **Pack mínimo**: archivo raíz (AGENTS.md/CLAUDE.md) + `feature_list.json` + log de progreso + `init.sh`. Solo
+  cuando hay varios dominios, planes activos y políticas de calidad se pasa al pack `openai-advanced/`. El nombre
+  `claude-progress.md` es una convención histórica: es un log genérico y el agente solo lo lee o escribe si sus
+  instrucciones lo dicen; nombrarlo en el archivo raíz. [R] (https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/resources/index.md, 2026-11-23)
 - **"Limpiar después" equivale a nunca.** Limpieza inmediata en cada sesión y un barrido periódico, idempotente.
 
 ## Alcance [L07, L08]
@@ -92,6 +101,11 @@ Cada fallo se atribuye a una capa y se arregla esa capa (diagnostic loop), no se
 - **Granularidad**: que quepa en una sesión. "Implementar el carrito" es demasiado grande; "crear el campo name" es
   demasiado chico.
 - **VCR** (tareas verificadas ÷ tareas activadas): si es menor que 1, no se activa nada nuevo.
+- **`passing` es irreversible** y la transición la controla el harness (un script de verificación actualiza el
+  estado), no el agente. **Única fuente de verdad**: todo "qué falta" sale de la feature list; nada contradictorio en
+  el chat, TODOs o notas. **Back-pressure** = ítems que aún no pasan; cero = proyecto terminado. La lista la consumen
+  cuatro piezas: scheduler, verificador, generador del handoff y tracker de progreso.
+  [L08] (https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/lectures/lecture-08-why-feature-lists-are-harness-primitives/index.md, 2026-11-23)
 
 ## Verificación [L09, L10, L11]
 - **Los agentes se sobreestiman y se autoevalúan de más.** "El código se ve bien" no equivale a "funciona". Solución:
@@ -105,6 +119,10 @@ Cada fallo se atribuye a una capa y se arregla esa capa (diagnostic loop), no se
 - **Observabilidad en dos capas**:
   - *Runtime*: logs estructurados con correlation id; las salidas vacías ("0 results") delatan fallos silenciosos.
   - *Proceso*: sprint contract y rúbrica con evidencia.
+  - **"Lo que ve el modelo, queda en el log"**: todo lo que entra a una petición al modelo debe poder reconstruirse
+    desde un log append-only. Permisos, memoria y política se cuelgan del loop como listeners, no se incrustan.
+    [R harness-designs deepseek] (https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/harness-designs/deepseek/index.md, 2026-11-23). **POR VERIFICAR**:
+    el producto (DeepSeek Harness, `dsh`, Developer Preview agosto 2026) solo lo cita esa página.
   
   El rechazo vago ("no se siente bien") no sirve.
 - **El evaluador se autoconvence de aprobar.** Hay que calibrarlo contra el juicio humano en 3 a 5 rondas, volviendo
@@ -178,3 +196,10 @@ Cada fallo se atribuye a una capa y se arregla esa capa (diagnostic loop), no se
 | loops | `/goal`, `/loop`, `/schedule`, channels, `claude -p` |
 | paralelismo | worktrees (`claude -w`), `isolation: worktree`, `/batch`, dynamic workflows |
 | estado externo | PROGRESS.md, DECISIONS.md, feature_list.json, auto memory |
+
+Reparto de responsabilidades: CLAUDE.md dice *qué*, skills *cómo*, MCP *a dónde conectar*, hooks *cuándo forzar*.
+Mezclarlos filtra contexto. Los chequeos contra el "ya terminé" prematuro van en hooks (`PostToolUse`, `Stop`), no en
+súplicas del prompt. **POR VERIFICAR**: la página dice que el modo de permisos "default" pasó a llamarse "Manual"
+desde v2.1.200 (modos: Manual, Plan, acceptEdits, Auto, dontAsk, bypassPermissions); las cifras del análisis VILA
+(compactación en cinco capas, siete modos) son de v2.1.88 y pueden no valer hoy. [R harness-designs claude-code]
+(https://raw.githubusercontent.com/walkinglabs/learn-harness-engineering/main/docs/en/harness-designs/claude-code/index.md, 2026-11-23)

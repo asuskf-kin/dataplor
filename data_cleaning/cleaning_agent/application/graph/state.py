@@ -64,6 +64,8 @@ class CleaningState(TypedDict, total=False):
 
     # Delivery: Datamatch (Front) -> QA -> Azure
     run_datamatch: bool | None
+    # Paso 1 bottler: ¿validar la base de clientes antes del Datamatch? (respuesta)
+    clients_validation: dict[str, object] | None
     datamatch: dict[str, object] | None
     qa_report: str | None
     thresholds: dict[str, float] | None
@@ -74,6 +76,8 @@ class CleaningState(TypedDict, total=False):
     # Executive report, warehouse, priorización, lineage
     report_files: list[str]
     report_summary: dict[str, object] | None
+    # Registro de prospección: the 16 fields of the final metadata (domain/registry.py)
+    registro_prospeccion: dict[str, object] | None
     warehouse: list[dict[str, object]]
     priorizacion: dict[str, object] | None
     lineage_path: str | None
@@ -82,6 +86,10 @@ class CleaningState(TypedDict, total=False):
     # Datamatch loop: one summary per step (overwritten as a whole, keyed by step)
     datamatch_history: list[dict[str, object]]
     datamatch_loop_done: bool
+    # QA de la prospección tras el ciclo: preparado, revisión, resultado y decisión
+    prospection_qa: dict[str, Any] | None
+    # Provinces the bottler does not serve: their points leave the prospects
+    excluded_states: list[str]
     # The person chose not to run Datamatch: no prospects file and no gold package
     datamatch_skipped: bool
     qa_process_date: str

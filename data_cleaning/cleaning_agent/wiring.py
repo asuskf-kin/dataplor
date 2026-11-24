@@ -6,7 +6,9 @@ from typing import Any
 
 from cleaning_agent.adapters.azure_storage import AzureBlobStorage
 from cleaning_agent.adapters.brand import KinBrand
+from cleaning_agent.adapters.clients_bottler import ClientBottlerValidator
 from cleaning_agent.adapters.datamatch_steps import FileDatamatchSteps
+from cleaning_agent.adapters.dwh_paths import DwhPathResolver
 from cleaning_agent.adapters.executive_report import FileExecutiveReport
 from cleaning_agent.adapters.filesystem import FileSystemAudit, FileSystemDatasets
 from cleaning_agent.adapters.gold_package import FileGoldPackage
@@ -18,6 +20,7 @@ from cleaning_agent.adapters.prefilters import (
     TerritoryPrefilter,
 )
 from cleaning_agent.adapters.priorizacion import PriorizacionSubprocess
+from cleaning_agent.adapters.prospection_qa import FileProspectionQa
 from cleaning_agent.adapters.qa_datamatch import QADatamatchSubprocess
 from cleaning_agent.application.cleaning_catalog import catalog_for
 from cleaning_agent.application.graph.nodes import Dependencies
@@ -27,6 +30,7 @@ from cleaning_agent.settings import (
     AZURE_SETTINGS,
     BRAND_SETTINGS,
     CLIENT_SETTINGS,
+    CLIENTS_BOTTLER_SETTINGS,
     DATA_DIR,
     DATAMATCH_SETTINGS,
     DWH_SETTINGS,
@@ -35,10 +39,31 @@ from cleaning_agent.settings import (
     PRIORIZACION_SETTINGS,
     PROJECT_ROOT,
     RAW_SETTINGS,
+    REGISTRY_SETTINGS,
     REPORT_SETTINGS,
     TERRITORY_SETTINGS,
 )
 
+
+def dwh_paths() -> DwhPathResolver:
+    """Metadata names warehouse addresses, so anyone can follow it from the DWH."""
+    return DwhPathResolver(
+        PROJECT_ROOT,
+        PROJECT_ROOT / str(DWH_SETTINGS["mirror_dir"]),
+        str(DWH_SETTINGS["container"]),
+        (str(RAW_SETTINGS["front_container"]),),
+    )
+
+
+def client_validator() -> ClientBottlerValidator:
+    """Paso 1 bottler: el mismo validador para el grafo y para ``clean-clients``."""
+    return ClientBottlerValidator(
+        CLIENTS_BOTTLER_SETTINGS,
+        PROJECT_ROOT,
+        PROJECT_ROOT / str(DWH_SETTINGS["mirror_dir"]),
+        PROJECT_ROOT / str(BRAND_SETTINGS["assets_dir"]),
+        dwh_paths(),
+    )
 
 def form_defaults() -> dict[CleaningMode, dict[str, Any]]:
     # raw_csv / output_csv / parquet are filled from the intake of each run
@@ -75,7 +100,7 @@ def default_dependencies() -> Dependencies:
             brand,
             timeout_s=float(DATAMATCH_SETTINGS["qa_timeout_s"]),
         ),
-        lineage=FileLineage(PROJECT_ROOT),
+        lineage=FileLineage(PROJECT_ROOT, dwh_paths()),
         executive_report=FileExecutiveReport(
             PROJECT_ROOT,
             DATA_DIR / "dropped",
@@ -91,7 +116,7 @@ def default_dependencies() -> Dependencies:
         raw_container=str(RAW_SETTINGS["container"]),
         front_container=str(RAW_SETTINGS["front_container"]),
         raw_local_dir=PROJECT_ROOT / str(RAW_SETTINGS["local_dir"]),
-        staging=FileLayerStaging(brand),
+        staging=FileLayerStaging(brand, dwh_paths()),
         gold_package=FileGoldPackage(
             PROJECT_ROOT,
             brand,
@@ -99,7 +124,10 @@ def default_dependencies() -> Dependencies:
         ),
         gold_client_label=str(GOLD_PACKAGE_SETTINGS["client_label"]),
         gold_contacts=tuple(str(c) for c in GOLD_PACKAGE_SETTINGS["contacts"] or []),
+        registry_responsible=str(REGISTRY_SETTINGS["responsable"] or ""),
+        registry_registered_by=str(REGISTRY_SETTINGS["registrado_por"] or ""),
         gold_client_columns=dict(GOLD_PACKAGE_SETTINGS["client_columns"] or {}),
+        prospection_qa=FileProspectionQa(PROJECT_ROOT, brand),
         datamatch_steps=FileDatamatchSteps(
             PROJECT_ROOT,
             brand,
@@ -149,6 +177,7 @@ def default_dependencies() -> Dependencies:
         items_to_track=[str(i) for i in AGENT_SETTINGS["items_to_track"]],
         max_attempts=int(AGENT_SETTINGS["max_input_attempts"]),
         front_url=str(DATAMATCH_SETTINGS["front_url"]),
+        client_validation=client_validator(),
         datamatch_defaults={
             "clients_file": str(DATAMATCH_SETTINGS["clients_file"]),
             "thresholds": dict(DATAMATCH_SETTINGS["thresholds"]),

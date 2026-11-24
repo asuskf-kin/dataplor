@@ -18,12 +18,16 @@ cleaning_agent/
                          dataplor_id; region only when known), opportunity tables, deck figures,
                          swapped-coordinates rule, canonical province names
     lineage.py           stage records
+    dwh_paths.py         local path -> DWH address in every metadata file (domain/dwh_paths.py: mirror rule)
+  domain/upstream.py     paso 0 counts (raw -> Front)   ·   domain/registry.py  16-field registro de prospección
+  domain/cleaning/lodging_filter.py   module 7: Airbnb / rented flats (mandatory)
   application/
     ports.py             Protocols (one per external system)
     cleaning_catalog.py  modules per country
     graph/               state, nodes per phase, builder (edges), progress (step status)
       nodes.py           Dependencies + intake/cleaning nodes + shared helpers
       warehouse_nodes.py bronze, front, silver, gold, Datamatch loop, prospects
+      clients_nodes.py   step 1 bottler: ¿validar clientes? -> validate -> bronze clients
       franchise_nodes.py · delivery_nodes.py · priorizacion_nodes.py · gold_nodes.py
   adapters/            one per port
     azure_storage.py     upload (no re-upload, MD5), download, list (retry + circuit breaker)
@@ -37,7 +41,7 @@ cleaning_agent/
     priorizacion.py      priorización repo as a subprocess (own venv, own .env)
     brand.py · xlsx_brand.py   Kin brand for HTML, matplotlib and Excel
     assets/prospecting_deck_template.pptx
-  entrypoints/         cli.py (start, resume, status, redo, interactive, graph, maps), studio.py
+  entrypoints/         cli.py (start, resume, status, redo, interactive, graph, maps, sidecars), studio.py
   wiring.py            composition root: binds ports to adapters + config.yaml
   settings.py          reads config.yaml
 scripts/build_prospecting_deck_template.py   one-off: approved deck -> sanitized template

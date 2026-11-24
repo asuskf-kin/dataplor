@@ -16,7 +16,7 @@
   ],
   "outputs": [
     {
-      "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+      "path": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson",
       "rows": null,
       "bytes": 2696,
       "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba",
@@ -27,7 +27,7 @@
     "files": 1
   },
   "archivo": {
-    "path": "C:\\Users\\KIN\\Desktop\\Kin\\prospecting\\data_cleaning\\data\\raw\\ar\\andina\\insumos\\Argentina_Andina.geojson",
+    "path": "prospection-datacleaning/global_geojson/Argentina_Andina.geojson",
     "bytes": 2696,
     "sha256": "830410956824fa222a3e01ef15d08533af8baf3e7f6a5358c61cbd56ceda6eba"
   }

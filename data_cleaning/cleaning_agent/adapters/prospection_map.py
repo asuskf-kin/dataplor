@@ -26,7 +26,7 @@ import h3
 import polars as pl
 
 from cleaning_agent.adapters.brand import LOGO_FORMAL_DARK, PAGE_CSS, KinBrand
-from cleaning_agent.domain.gold_package import canonical_names
+from cleaning_agent.domain.gold_package import canonical_names, fill_place_from_nearest
 from cleaning_agent.domain.models import ClientColumns
 
 CATEGORICAL = (
@@ -100,24 +100,47 @@ def _grid(
     }
 
 
+MISSING_CITY = "Sin ciudad"
+MISSING_STATE = "Sin provincia"
+
+
 def _es(n: int) -> str:
     """Spanish thousands separator: 46812 -> 46.812, as the map's own counters."""
     return f"{n:,}".replace(",", ".")
 
 
 def map_prospects(prospects: pl.DataFrame) -> pl.DataFrame:
-    """Prospects the map draws: with city, province and a score above 0.
+    """Prospects the map draws: every one with coordinates and a priorización score.
 
-    User decision 2026-11-17: a point without its place or without a priorización
-    score has nothing to show in the selectors or the tooltip, so the map leaves it
-    out. The package CSVs keep every row; only the map is affected.
+    User, 2026-11-23: "los mapas deben ser el mismo número que dices en el repo final
+    de datamatch": the map count must equal the prospects file. A point without its
+    city or province is drawn under "Sin ciudad" / "Sin provincia" (it used to be left
+    out, decision of 2026-11-17); score 0 is drawn too ("en el mapa sí agrega los
+    puntos con score = 0"). Only a point the map cannot place (no valid coordinates)
+    or without any score stays out, and the map says how many.
+
+    User, 2026-11-23 ("el mapa me hace ruido existe un sin"): a point without city or
+    province first takes the one of its nearest named prospect; "Sin ciudad" /
+    "Sin provincia" is left only for a point no coordinates can place.
     """
-    filled = [
-        pl.col(c).cast(pl.Utf8).str.strip_chars().fill_null("") != ""
-        for c in ("city", "state")
-    ]
     score = pl.col("weighted_combined_score").cast(pl.Float64, strict=False)
-    return prospects.filter(*filled, score.fill_null(0) > 0)
+    lat = pl.col("latitude").cast(pl.Float64, strict=False)
+    lon = pl.col("longitude").cast(pl.Float64, strict=False)
+    located = fill_place_from_nearest(fill_place_from_nearest(prospects, "city"), "state")
+    placed = located.with_columns(
+        *[
+            pl.when(pl.col(c).cast(pl.Utf8).str.strip_chars().fill_null("") == "")
+            .then(pl.lit(label))
+            .otherwise(pl.col(c).cast(pl.Utf8))
+            .alias(c)
+            for c, label in ((("city", MISSING_CITY), ("state", MISSING_STATE)))
+        ]
+    )
+    return placed.filter(
+        lat.is_between(-90, 90),
+        lon.is_between(-180, 180),
+        score.is_not_null() & (score >= 0),
+    )
 
 
 def _payload(
@@ -562,7 +585,7 @@ def render_map(
 {MAP_CSS}</style></head><body>
 <aside id="side">{brand.logo(LOGO_FORMAL_DARK)}
 <div class="eyebrow">Mapa de prospección</div><h1>{title}</h1>
-<p class="sub">{version} · {_es(shown.height)} prospectos{f" ({_es(hidden)} sin ciudad, provincia o score no se muestran)" if hidden else ""} · <span class="ka-site">kinanalytics.com</span></p>
+<p class="sub">{version} · {_es(shown.height)} prospectos{f" ({_es(hidden)} sin coordenadas o sin score no se muestran)" if hidden else ""} · <span class="ka-site">kinanalytics.com</span></p>
 <div class="stats"><div class="stat"><div class="num" id="st-total"></div><div class="lbl">Prospectos</div></div>
 <div class="stat"><div class="num key" id="st-vis"></div><div class="lbl">Visibles</div></div></div>
 <div class="sec">Vista</div>
